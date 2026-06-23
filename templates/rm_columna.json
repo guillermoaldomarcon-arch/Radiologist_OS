@@ -1,0 +1,25 @@
+{
+  "template_id": "rm_columna",
+  "modality": "RM",
+  "study_type": "columna",
+  "display_name": "RM de Columna",
+  "sections": [
+    "indication",
+    "technique",
+    "findings",
+    "impression",
+    "recommendations"
+  ],
+  "expected_organs_or_regions": [
+    "cuerpos vertebrales",
+    "discos intervertebrales",
+    "canal raquídeo",
+    "médula espinal",
+    "forámenes de conjunción",
+    "articulaciones facetarias",
+    "partes blandas paravertebrales",
+    "alineación vertebral",
+    "cono medular"
+  ],
+  "default_technique_text": "RM de columna, secuencias multiplanares, sin contraste."
+}
