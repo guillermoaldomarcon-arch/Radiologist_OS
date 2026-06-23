@@ -1,0 +1,26 @@
+{
+  "template_id": "eco_abdominal",
+  "modality": "ECO",
+  "study_type": "abdominal",
+  "display_name": "Ecografía Abdominal",
+  "sections": [
+    "indication",
+    "technique",
+    "findings",
+    "impression",
+    "recommendations"
+  ],
+  "expected_organs_or_regions": [
+    "hígado",
+    "vesícula biliar",
+    "vía biliar",
+    "páncreas",
+    "riñón derecho",
+    "riñón izquierdo",
+    "bazo",
+    "aorta abdominal",
+    "vejiga",
+    "líquido libre"
+  ],
+  "default_technique_text": "Ecografía abdominal en tiempo real, modo B."
+}
