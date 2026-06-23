@@ -56,20 +56,75 @@ _NEGATION_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Minimal controlled vocabulary for the MVP. Expand per template later.
-# This is intentionally small — only used to decide "does this sentence
-# look like it's about an organ/region at all", not to validate fully
-# (that responsibility belongs to the Quality Engine, against the
-# template's expected_organs_or_regions).
-_ORGAN_HINTS = [
-    "parénquima", "parenquima", "ventrículo", "ventriculo", "ventrículos",
+def _singularize_simple(word: str) -> str:
+    """
+    Deliberately simple singular/plural normalization for Spanish —
+    NOT a linguistic stemmer. Only handles the common regular case:
+    a word ending in a vowel followed by "s" (e.g. "discos" ->
+    "disco", "vesículas" -> "vesícula").
+
+    Handles multi-word terms (e.g. "discos intervertebrales") by
+    normalizing each word independently, since Spanish adjectives
+    agree in number with their noun ("disco intervertebral" /
+    "discos intervertebrales" both need normalizing, not just the
+    head noun).
+
+    This intentionally does NOT attempt irregular cases (e.g.
+    "tórax", which already ends in "x" and has no separate plural
+    form in this context, or "lápiz"/"lápices"-style changes). Those
+    cases must be handled explicitly by listing both forms in the
+    template's expected_organs_or_regions — silently guessing at
+    irregular pluralization is the kind of unverified assumption this
+    project's philosophy avoids. This function only removes
+    ambiguity in the common, safe case; it does not try to be
+    linguistically complete.
+    """
+    def _singularize_word(w: str) -> str:
+        if len(w) > 2 and w[-1] == "s" and w[-2] in "aeiouáéíóú":
+            return w[:-1]
+        return w
+
+    words = word.strip().lower().split()
+    return " ".join(_singularize_word(w) for w in words)
+
+
+def _organ_hint_matches(hint: str, sentence_lower: str) -> bool:
+    """
+    Matches an organ_hint against a sentence, tolerant of simple
+    regular singular/plural differences in either direction (hint
+    plural vs. sentence singular, or vice versa). See
+    _singularize_simple for what this does and does not cover.
+    """
+    hint_lower = hint.lower()
+    if hint_lower in sentence_lower:
+        return True
+
+    # Try matching the singularized hint against the sentence, and
+    # the singularized sentence against the hint — covers both
+    # directions without needing to singularize every word in the
+    # sentence individually.
+    singular_hint = _singularize_simple(hint_lower)
+    if singular_hint != hint_lower and singular_hint in sentence_lower:
+        return True
+
+    return False
+
+
+# Minimal fallback vocabulary, used ONLY if no organ_hints list is
+# provided by the caller. In normal operation, callers should pass
+# the `expected_organs_or_regions` list from the relevant template's
+# JSON definition (see template_engine.load_template), so the parser
+# recognizes the correct vocabulary for whatever study type is being
+# parsed instead of being limited to a single hardcoded list.
+_DEFAULT_ORGAN_HINTS = [
+    "parénquima", "parenquima", "ventrículo", "ventriculo",
     "cisterna", "calota", "senos paranasales", "fosa posterior",
     "sustancia blanca", "sustancia gris", "tronco encefálico",
-    "tronco encefalico", "cerebelo",
+    "tronco encefalico", "cerebelo", "línea media", "linea media",
 ]
 
 
-def _looks_clinical(sentence: str) -> bool:
+def _looks_clinical(sentence: str, organ_hints: List[str]) -> bool:
     """
     Heuristic: does this sentence look like it contains clinical
     content worth trying to parse, as opposed to boilerplate
@@ -78,14 +133,14 @@ def _looks_clinical(sentence: str) -> bool:
     never used to create a Finding directly.
     """
     lowered = sentence.lower()
-    if any(hint in lowered for hint in _ORGAN_HINTS):
+    if any(_organ_hint_matches(hint, lowered) for hint in organ_hints):
         return True
     if _MEASUREMENT_PATTERN.search(sentence):
         return True
     return False
 
 
-def _extract_with_rules(sentence: str) -> Optional[Finding]:
+def _extract_with_rules(sentence: str, organ_hints: List[str]) -> Optional[Finding]:
     """
     Attempts to build a Finding using only deterministic patterns.
     Returns None if the sentence doesn't match a clear, confident
@@ -110,7 +165,8 @@ def _extract_with_rules(sentence: str) -> Optional[Finding]:
     negation_match = _NEGATION_PATTERN.search(sentence)
 
     organ = next(
-        (hint for hint in _ORGAN_HINTS if hint in sentence.lower()), None
+        (hint for hint in organ_hints if _organ_hint_matches(hint, sentence.lower())),
+        None,
     )
 
     if organ is None:
@@ -196,46 +252,4 @@ Sentence: \"\"\"{sentence}\"\"\""""
     except (json.JSONDecodeError, AttributeError):
         return None
 
-    if not data.get("present", False):
-        return None
-    if not data.get("organ"):
-        return None
-
-    return Finding(
-        name=data["organ"],
-        organ=data.get("organ"),
-        location=data.get("location"),
-        side=data.get("side"),
-        size_mm=data.get("size_mm"),
-        description=data.get("description", sentence.strip()),
-        certainty="LOW",  # AI-assisted extraction is always LOW by default
-        status="ACTIVE",
-    )
-
-
-def parse(dictation_text: str, call_claude=None) -> List[Finding]:
-    """
-    Main entry point. Splits dictation into sentences, applies rules
-    first, and falls back to AI extraction (if `call_claude` is
-    provided) only for sentences that look clinical but didn't match
-    a rule.
-
-    `call_claude` is optional and injected by the caller so this
-    module has no hard dependency on a specific API client. If it is
-    None, sentences that need the AI fallback are simply skipped
-    (never guessed).
-    """
-    findings: List[Finding] = []
-
-    sentences = [s.strip() for s in re.split(r"(?<=[.;])\s+", dictation_text) if s.strip()]
-
-    for sentence in sentences:
-        finding = _extract_with_rules(sentence)
-
-        if finding is None and _looks_clinical(sentence) and call_claude is not None:
-            finding = _extract_with_ai(sentence, call_claude)
-
-        if finding is not None:
-            findings.append(finding)
-
-    return findings
+    if not
