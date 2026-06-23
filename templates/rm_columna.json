@@ -12,11 +12,15 @@
   ],
   "expected_organs_or_regions": [
     "cuerpos vertebrales",
+    "cuerpo vertebral",
     "discos intervertebrales",
+    "disco intervertebral",
     "canal raquídeo",
     "médula espinal",
     "forámenes de conjunción",
+    "foramen de conjunción",
     "articulaciones facetarias",
+    "articulación facetaria",
     "partes blandas paravertebrales",
     "alineación vertebral",
     "cono medular"
