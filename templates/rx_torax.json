@@ -1,0 +1,26 @@
+{
+  "template_id": "rx_torax",
+  "modality": "RX",
+  "study_type": "torax",
+  "display_name": "Radiografía de Tórax",
+  "sections": [
+    "indication",
+    "technique",
+    "findings",
+    "impression",
+    "recommendations"
+  ],
+  "expected_organs_or_regions": [
+    "campos pulmonares",
+    "pulmón derecho",
+    "pulmón izquierdo",
+    "silueta cardíaca",
+    "mediastino",
+    "hilios pulmonares",
+    "senos costofrénicos",
+    "diafragma",
+    "parrilla costal",
+    "partes blandas"
+  ],
+  "default_technique_text": "Radiografía de tórax frente, en inspiración."
+}
