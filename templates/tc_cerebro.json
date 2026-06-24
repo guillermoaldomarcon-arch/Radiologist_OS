@@ -1,0 +1,38 @@
+{
+  "template_id": "tc_cerebro",
+  "modality": "TC",
+  "study_type": "cerebro",
+  "display_name": "TC de Cerebro",
+  "sections": [
+    "indication",
+    "technique",
+    "infratentorial",
+    "supratentorial",
+    "impression",
+    "recommendations"
+  ],
+  "expected_organs_or_regions": [
+    "IV ventrículo",
+    "cuarto ventrículo",
+    "espacios subaracnoideos basales",
+    "tejido nervioso infratentorial",
+    "estructuras de la línea media",
+    "línea media",
+    "sistema ventricular supratentorial",
+    "tejido nervioso supratentorial",
+    "surcos corticales",
+    "lesiones óseas",
+    "calota",
+    "parénquima",
+    "ventrículo",
+    "ventrículos",
+    "cisterna",
+    "senos paranasales",
+    "fosa posterior",
+    "sustancia blanca",
+    "sustancia gris",
+    "tronco encefálico",
+    "cerebelo"
+  ],
+  "default_technique_text": "Se exploró el cerebro con cortes axiales, paralelos a la línea orbitomeatal, guiados por Scout View con ventana ósea."
+}
