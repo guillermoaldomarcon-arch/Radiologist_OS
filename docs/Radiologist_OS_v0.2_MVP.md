@@ -259,5 +259,16 @@ Prioridades, en este orden:
 
 ✅ Arquitectura completa definida (visión).
 ✅ Repositorio creado.
-✅ `finding.py` implementado.
-🚀 Próximo paso concreto: implementar `confidence.py`, `status.py`, `recommendation.py`, `report.py`, las 4 definiciones de template en JSON (Rx tórax, TC cerebro, RM columna, Eco abdominal), y armar los 4 casos de test correspondientes (incluyendo el caso adversarial de Quality Engine) antes de escribir el Parser Engine completo.
+✅ 4 modelos implementados: `finding.py`, `confidence.py`, `status.py`, `recommendation.py`, `report.py`.
+✅ 4 engines del MVP implementados y validados: `parser_engine.py`, `template_engine.py`, `quality_engine.py`, `followup_engine.py`.
+✅ 4 templates JSON creados: `tc_cerebro.json`, `rx_torax.json`, `rm_columna.json`, `eco_abdominal.json`.
+✅ 6 tests creados y pasando: `test_templates.py` (1 caso por template, 13 checks), `test_quality_adversarial.py` (3 casos adversariales, 12 checks), `test_followup.py` (con y sin estudio previo, 5 checks).
+
+**Decisiones de diseño tomadas durante la construcción** (documentadas en el código, resumidas aquí para referencia rápida):
+- Parser: extracción híbrida reglas-primero + IA de respaldo. Negaciones ("sin alteraciones", "conservado", etc.) generan Finding con `status="NO_FINDING"` en vez de ser descartadas — preserva trazabilidad de qué fue evaluado.
+- El vocabulario de órganos/regiones reconocido por el parser viene del `expected_organs_or_regions` de cada template (parámetro `organ_hints`), no de una lista hardcodeada — así el parser nunca "reconoce" anatomía de un estudio distinto al que se está dictando.
+- Normalización singular/plural simple en el parser (`_singularize_simple`) para casos regulares; casos irregulares (ej. "intervertebral"/"intervertebrales") se resuelven listando ambas formas explícitamente en el template JSON correspondiente — nunca se adivina.
+- Quality Engine: 3 capas (estructural → coherencia con IA → bloqueo). Nunca corrige automáticamente, solo marca `FLAGGED` con motivo.
+- Followup Engine: umbral de cambio real = combinado, ≥3mm absoluto Y ≥20% relativo al tamaño previo (criterio tipo RECIST, decidido con Guille). Detecta transición `NO_FINDING → ACTIVE` como `NEW` real.
+
+🚀 Próximo paso sugerido: conectar el `call_claude` real (usando el mismo patrón que ya funciona en GuardIA/DiagnosIA con `claude-sonnet-4-5`) para activar el fallback de IA del Parser Engine y la Capa 2 del Quality Engine, hoy solo probados con respuestas simuladas. Alternativamente, reemplazar los dictados genéricos de los tests por dictados reales (anonimizados) de Guille para calibrar mejor el vocabulario y los umbrales con casos clínicos reales.
