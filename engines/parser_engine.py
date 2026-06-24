@@ -43,7 +43,7 @@ _LATERALITY_PATTERN = re.compile(
 
 _NEGATION_PATTERN = re.compile(
     r"\b("
-    r"sin evidencia de|no se observa|no se identifica|sin"
+    r"sin evidencia de|no se observan?|no se identifican?|sin"
     r"|conservad[oa]s?"
     r"|normal(?:es)?"
     r"|sin particularidades"
@@ -52,9 +52,24 @@ _NEGATION_PATTERN = re.compile(
     r"|sin hallazgos patol[óo]gicos"
     r"|de aspecto habitual"
     r"|preservad[oa]s?"
+    r"|no hay\b"
     r")\b",
     re.IGNORECASE,
 )
+
+_ACCENT_MAP = str.maketrans("áéíóúÁÉÍÓÚ", "aeiouAEIOU")
+
+
+def _strip_accents(text: str) -> str:
+    """
+    Removes Spanish accent marks for comparison purposes only (never
+    used to alter what gets stored in a Finding's description — only
+    to make organ-hint matching tolerant of dictation/typing
+    inconsistencies like "oseas" vs "óseas", both of which are common
+    in real fast-typed dictation).
+    """
+    return text.translate(_ACCENT_MAP)
+
 
 def _singularize_simple(word: str) -> str:
     """
@@ -90,21 +105,30 @@ def _singularize_simple(word: str) -> str:
 
 def _organ_hint_matches(hint: str, sentence_lower: str) -> bool:
     """
-    Matches an organ_hint against a sentence, tolerant of simple
-    regular singular/plural differences in either direction (hint
-    plural vs. sentence singular, or vice versa). See
-    _singularize_simple for what this does and does not cover.
+    Matches an organ_hint against a sentence, tolerant of:
+    - simple regular singular/plural differences (see _singularize_simple)
+    - presence/absence of accent marks (e.g. "oseas" vs "óseas"),
+      common in fast-typed real dictation.
     """
     hint_lower = hint.lower()
+    sentence_no_accents = _strip_accents(sentence_lower)
+    hint_no_accents = _strip_accents(hint_lower)
+
     if hint_lower in sentence_lower:
+        return True
+    if hint_no_accents in sentence_no_accents:
         return True
 
     # Try matching the singularized hint against the sentence, and
     # the singularized sentence against the hint — covers both
     # directions without needing to singularize every word in the
-    # sentence individually.
+    # sentence individually. Checked both with and without accents.
     singular_hint = _singularize_simple(hint_lower)
+    singular_hint_no_accents = _strip_accents(singular_hint)
+
     if singular_hint != hint_lower and singular_hint in sentence_lower:
+        return True
+    if singular_hint_no_accents in sentence_no_accents:
         return True
 
     return False
@@ -252,4 +276,62 @@ Sentence: \"\"\"{sentence}\"\"\""""
     except (json.JSONDecodeError, AttributeError):
         return None
 
-    if not
+    if not data.get("present", False):
+        return None
+    if not data.get("organ"):
+        return None
+
+    return Finding(
+        name=data["organ"],
+        organ=data.get("organ"),
+        location=data.get("location"),
+        side=data.get("side"),
+        size_mm=data.get("size_mm"),
+        description=data.get("description", sentence.strip()),
+        certainty="LOW",  # AI-assisted extraction is always LOW by default
+        status="ACTIVE",
+    )
+
+
+def parse(
+    dictation_text: str,
+    call_claude=None,
+    organ_hints: Optional[List[str]] = None,
+) -> List[Finding]:
+    """
+    Main entry point. Splits dictation into sentences, applies rules
+    first, and falls back to AI extraction (if `call_claude` is
+    provided) only for sentences that look clinical but didn't match
+    a rule.
+
+    `organ_hints`: list of organ/region names this parser should
+    recognize. Callers should normally pass the
+    `expected_organs_or_regions` list from the relevant template's
+    JSON definition (template_engine.load_template(template_id)
+    ["expected_organs_or_regions"]), so the parser uses the correct
+    vocabulary for the study type being dictated — e.g. liver/spleen
+    terms for an abdominal ultrasound, vertebral terms for a spine
+    MRI, etc. If not provided, falls back to a minimal default
+    vocabulary (brain CT terms only) for backward compatibility.
+
+    `call_claude` is optional and injected by the caller so this
+    module has no hard dependency on a specific API client. If it is
+    None, sentences that need the AI fallback are simply skipped
+    (never guessed).
+    """
+    hints = organ_hints if organ_hints is not None else _DEFAULT_ORGAN_HINTS
+
+    findings: List[Finding] = []
+
+    sentences = [s.strip() for s in re.split(r"(?<=[.;])\s+", dictation_text) if s.strip()]
+
+    for sentence in sentences:
+        finding = _extract_with_rules(sentence, hints)
+
+        if finding is None and _looks_clinical(sentence, hints) and call_claude is not None:
+            finding = _extract_with_ai(sentence, call_claude)
+
+        if finding is not None:
+            findings.append(finding)
+
+    return findings
