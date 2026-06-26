@@ -237,6 +237,17 @@ Esta sección es para contexto y dirección a largo plazo. Claude Code no debe g
 * Integración RIS/PACS
 * MCP
 
+## Ideas adicionales incorporadas (origen: síntesis de visión elaborada en otra herramienta, jun 2026)
+
+Estas ideas no añaden engines nuevos a la arquitectura ya definida arriba — se mapean sobre los engines existentes (Quality, Followup, Template) o son features de producto a futuro. Se listan aquí como inspiración para fases posteriores, no como tareas:
+
+* **Checklist inteligente de omisiones**: que el sistema señale qué estructuras esperadas por el template (`expected_organs_or_regions`) NO fueron mencionadas en el dictado — ni como hallazgo ni como NO_FINDING — para ayudar a detectar olvidos antes de cerrar el informe. Esto es una extensión natural del Quality Engine ya existente, no un módulo nuevo.
+* **Aprendizaje de estilo del radiólogo / personalización del lenguaje**: una vez que haya suficientes dictados reales calibrados (como los que ya fuimos incorporando a los templates), el sistema podría aprender preferencias de fraseo propias de Guille por tipo de estudio.
+* **Auditoría de informes / estadísticas personales**: métricas agregadas sobre cuántos informes quedaron FLAGGED, qué tipo de issues son más frecuentes, etc. — útil una vez que haya volumen real de uso.
+* **Protocolos dinámicos** (plantillas que omiten secciones sin hallazgos en vez de mostrar apartados vacíos): ya parcialmente cubierto por el diseño actual del Template Engine (no inventa contenido para rellenar), pero se podría refinar más adelante para que el informe final omita por completo secciones sin ningún Finding asociado, en vez de solo no inventarlas.
+* **Interoperabilidad con sistemas hospitalarios (RIS/PACS)**: ya estaba en el roadmap original, se mantiene.
+* **Expansión a otras especialidades** (cardiología, neumología, gastroenterología, medicina nuclear, patología): considerar solo después de que el MVP esté validado en uso real dentro de radiología.
+
 ---
 
 # Instrucción para Claude Code
