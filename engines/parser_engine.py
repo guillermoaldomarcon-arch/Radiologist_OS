@@ -53,6 +53,8 @@ _NEGATION_PATTERN = re.compile(
     r"|de aspecto habitual"
     r"|preservad[oa]s?"
     r"|no hay\b"
+    r"|uniforme[s]?"
+    r"|no evidencian?"
     r")\b",
     re.IGNORECASE,
 )
