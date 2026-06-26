@@ -19,11 +19,17 @@
     "médula espinal",
     "forámenes de conjunción",
     "foramen de conjunción",
+    "agujeros de conjunción",
+    "agujero de conjunción",
     "articulaciones facetarias",
     "articulación facetaria",
     "partes blandas paravertebrales",
     "alineación vertebral",
-    "cono medular"
+    "cono medular",
+    "raíces nerviosas",
+    "raíz nerviosa",
+    "cola de caballo",
+    "saco dural"
   ],
   "default_technique_text": "RM de columna, secuencias multiplanares, sin contraste."
 }
