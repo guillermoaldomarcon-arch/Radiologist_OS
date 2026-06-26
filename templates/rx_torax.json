@@ -11,6 +11,10 @@
     "recommendations"
   ],
   "expected_organs_or_regions": [
+    "lesiones pleuro pulmonares",
+    "lesión pleuro pulmonar",
+    "relación cardio torácica",
+    "relación cardiotorácica",
     "campos pulmonares",
     "pulmón derecho",
     "pulmón izquierdo",
