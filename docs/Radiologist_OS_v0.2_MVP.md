@@ -245,8 +245,18 @@ Estas ideas no añaden engines nuevos a la arquitectura ya definida arriba — s
 * **Aprendizaje de estilo del radiólogo / personalización del lenguaje**: una vez que haya suficientes dictados reales calibrados (como los que ya fuimos incorporando a los templates), el sistema podría aprender preferencias de fraseo propias de Guille por tipo de estudio.
 * **Auditoría de informes / estadísticas personales**: métricas agregadas sobre cuántos informes quedaron FLAGGED, qué tipo de issues son más frecuentes, etc. — útil una vez que haya volumen real de uso.
 * **Protocolos dinámicos** (plantillas que omiten secciones sin hallazgos en vez de mostrar apartados vacíos): ya parcialmente cubierto por el diseño actual del Template Engine (no inventa contenido para rellenar), pero se podría refinar más adelante para que el informe final omita por completo secciones sin ningún Finding asociado, en vez de solo no inventarlas.
-* **Interoperabilidad con sistemas hospitalarios (RIS/PACS)**: ya estaba en el roadmap original, se mantiene.
 * **Expansión a otras especialidades** (cardiología, neumología, gastroenterología, medicina nuclear, patología): considerar solo después de que el MVP esté validado en uso real dentro de radiología.
+
+## Integración con PACS/RIS — niveles de complejidad (no implementar todavía)
+
+La integración con sistemas hospitalarios no es un solo paso — son niveles de complejidad creciente, y conviene no saltar etapas:
+
+- **Nivel 0 (estado actual del MVP)**: sin integración. El radiólogo pega/escribe el dictado manualmente, recibe el informe. El PACS no participa.
+- **Nivel 1 — datos del paciente (no imágenes)**: el RIS/PACS provee al sistema el informe previo del mismo paciente automáticamente (alimentando al Followup Engine sin copiar/pegar manual). Típicamente vía estándares **HL7** o **FHIR**.
+- **Nivel 2 — imágenes (DICOM)**: el PACS envía las imágenes mismas en formato **DICOM** para que, en el futuro, un engine de visión (no existente hoy, sería parte de un futuro World Model Engine) las analice directamente, no solo el texto dictado.
+- **Nivel 3 — escritura bidireccional**: el informe final generado se escribe automáticamente de vuelta al RIS/PACS (vía DICOM Structured Report o HL7), sin copiar/pegar manual del lado de salida.
+
+**Recomendación de secuencia**: validar el Nivel 0 en uso real durante un tiempo antes de evaluar Nivel 1. Los niveles 2 y 3 dependen fuertemente de qué PACS/RIS específico use cada institución — no hay un único camino de integración válido para todos los casos.
 
 ---
 
@@ -272,14 +282,31 @@ Prioridades, en este orden:
 ✅ Repositorio creado.
 ✅ 4 modelos implementados: `finding.py`, `confidence.py`, `status.py`, `recommendation.py`, `report.py`.
 ✅ 4 engines del MVP implementados y validados: `parser_engine.py`, `template_engine.py`, `quality_engine.py`, `followup_engine.py`.
-✅ 4 templates JSON creados: `tc_cerebro.json`, `rx_torax.json`, `rm_columna.json`, `eco_abdominal.json`.
-✅ 6 tests creados y pasando: `test_templates.py` (1 caso por template, 13 checks), `test_quality_adversarial.py` (3 casos adversariales, 12 checks), `test_followup.py` (con y sin estudio previo, 5 checks).
+✅ 4 templates JSON creados **y calibrados con dictados reales de Guille**: `tc_cerebro.json`, `rx_torax.json`, `rm_columna.json`, `eco_abdominal.json`.
+✅ `integrations/claude_client.py`: conexión real y portable a la API de Anthropic (modelo `claude-sonnet-4-6`), no solo simulada en tests.
+✅ `run_pipeline_demo.py`: demo end-to-end del pipeline completo, con o sin API real (flag `--real`).
+✅ 6 tests creados y pasando: `test_templates.py` (13 checks), `test_quality_adversarial.py` (12 checks), `test_followup.py` (5 checks).
 
 **Decisiones de diseño tomadas durante la construcción** (documentadas en el código, resumidas aquí para referencia rápida):
-- Parser: extracción híbrida reglas-primero + IA de respaldo. Negaciones ("sin alteraciones", "conservado", etc.) generan Finding con `status="NO_FINDING"` en vez de ser descartadas — preserva trazabilidad de qué fue evaluado.
-- El vocabulario de órganos/regiones reconocido por el parser viene del `expected_organs_or_regions` de cada template (parámetro `organ_hints`), no de una lista hardcodeada — así el parser nunca "reconoce" anatomía de un estudio distinto al que se está dictando.
-- Normalización singular/plural simple en el parser (`_singularize_simple`) para casos regulares; casos irregulares (ej. "intervertebral"/"intervertebrales") se resuelven listando ambas formas explícitamente en el template JSON correspondiente — nunca se adivina.
+- Parser: extracción híbrida reglas-primero + IA de respaldo. Negaciones generan Finding con `status="NO_FINDING"` en vez de ser descartadas — preserva trazabilidad de qué fue evaluado.
+- El vocabulario de órganos/regiones reconocido por el parser viene del `expected_organs_or_regions` de cada template (parámetro `organ_hints`), no de una lista hardcodeada.
+- Normalización singular/plural simple (`_singularize_simple`) y de tildes (`_strip_accents`) en el parser, para tolerar variaciones reales de tipeo/dictado. Casos irregulares de plural (ej. "intervertebral"/"intervertebrales") se resuelven listando ambas formas explícitamente en el template JSON — nunca se adivina.
 - Quality Engine: 3 capas (estructural → coherencia con IA → bloqueo). Nunca corrige automáticamente, solo marca `FLAGGED` con motivo.
-- Followup Engine: umbral de cambio real = combinado, ≥3mm absoluto Y ≥20% relativo al tamaño previo (criterio tipo RECIST, decidido con Guille). Detecta transición `NO_FINDING → ACTIVE` como `NEW` real.
+- Followup Engine: umbral de cambio real = combinado, ≥3mm absoluto Y ≥20% relativo al tamaño previo (criterio tipo RECIST, decidido con Guille).
 
-🚀 Próximo paso sugerido: conectar el `call_claude` real (usando el mismo patrón que ya funciona en GuardIA/DiagnosIA con `claude-sonnet-4-5`) para activar el fallback de IA del Parser Engine y la Capa 2 del Quality Engine, hoy solo probados con respuestas simuladas. Alternativamente, reemplazar los dictados genéricos de los tests por dictados reales (anonimizados) de Guille para calibrar mejor el vocabulario y los umbrales con casos clínicos reales.
+**Calibración con dictados reales — hallazgos del proceso**: al probar el parser contra dictados reales de Guille (no inventados), se encontraron y corrigieron brechas reales de vocabulario y de patrones de negación en cada uno de los 4 templates — por ejemplo, "no se observan" (plural) no estaba cubierto, solo "no se observa" (singular); "uniforme" y "no evidencian" no estaban reconocidos como sinónimos de normalidad; "agujeros de conjunción" (término real usado) no coincidía con "forámenes de conjunción" (término que se había puesto inicialmente); "Ambos Riñones" (descripción conjunta) no coincidía con "riñón derecho"/"riñón izquierdo" (siempre separados). Esto confirma que la calibración con dictados reales no es opcional — el vocabulario inventado inicialmente difería sustancialmente del uso real en los 4 templates.
+
+⬜ **Pendiente — conexión real con la API**: el flujo con `call_claude` real (`integrations/claude_client.py`) está construido y probado con datos simulados, pero no se ha ejecutado todavía con una `ANTHROPIC_API_KEY` real (requiere un entorno con Python 3.9+; el Windows 7 de Guille no es compatible con versiones modernas de Python — ver nota de portabilidad más abajo).
+
+## Plan de próximos pasos hacia uso diario (no implementado todavía)
+
+Esto es lo que falta para pasar de "engines que funcionan en pruebas" a "herramienta usable en consultorio", en orden sugerido:
+
+1. **Interfaz simple** (como ya existe para GuardIA/DiagnosIA): una página web donde Guille pueda pegar/escribir el dictado y obtener el informe, sin tocar código. No requiere todos los engines del MVP expuestos — alcanza con un endpoint que reciba texto + template_id y devuelva el Report.
+2. **Despliegue en un servidor** (Railway, ya conocido): el código de Radiologist_OS no puede ejecutarse en el Windows 7 de Guille (Python moderno no es compatible). Necesita correr en un servicio remoto, igual que GuardIA hoy.
+3. **Variable de entorno `ANTHROPIC_API_KEY` configurada en ese servidor**, para que `claude_client.py` funcione en producción, no solo en pruebas.
+4. **Persistencia de informes** (conectar con Supabase, como ya tiene GuardIA): hoy cada `Report` vive solo en la memoria de una ejecución puntual. Para que el Followup Engine compare contra estudios previos reales, los informes anteriores necesitan guardarse en una base de datos.
+5. **Decisión de producto**: ¿Radiologist_OS es una app nueva independiente, o un módulo dentro de DiagnosIA? Afecta cómo se organiza el despliegue y la autenticación de usuarios.
+6. **Validación en uso real** durante un tiempo, antes de evaluar cualquier integración con PACS/RIS (ver sección de niveles más abajo).
+
+🚀 Próximo paso concreto sugerido: punto 1 (interfaz simple) + punto 2 (despliegue), siguiendo el mismo patrón ya usado para GuardIA — esto es lo que primero convierte el proyecto en algo usable, antes de sumar persistencia o integraciones.
