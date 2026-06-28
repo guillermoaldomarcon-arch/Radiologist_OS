@@ -3,13 +3,62 @@
   "modality": "TC",
   "study_type": "cerebro",
   "display_name": "TC de Cerebro",
+  "default_technique_text": "Se exploró el cerebro con cortes axiales, paralelos a la línea orbitomeatal, guiados por Scout View con ventana ósea.",
   "sections": [
-    "indication",
-    "technique",
-    "infratentorial",
-    "supratentorial",
-    "impression",
-    "recommendations"
+    {
+      "section_id": "infratentorial",
+      "section_title": "A NIVEL INFRATENTORIAL",
+      "lines": [
+        {
+          "line_id": "iv_ventriculo_espacios_basales",
+          "normal_text": "El IV ventrículo y el conjunto de los espacios subaracnoideos basales presentan topografía y morfología normales.",
+          "concept": "topografía y morfología del IV ventrículo y espacios subaracnoideos basales",
+          "omit_if_replaced_by_major_finding": false
+        },
+        {
+          "line_id": "densidad_infratentorial",
+          "normal_text": "No se observan alteraciones densitométricas del tejido nervioso infratentorial.",
+          "concept": "densidad/señal del tejido nervioso infratentorial en general",
+          "omit_if_replaced_by_major_finding": true
+        }
+      ]
+    },
+    {
+      "section_id": "supratentorial",
+      "section_title": "A NIVEL SUPRATENTORIAL",
+      "lines": [
+        {
+          "line_id": "linea_media",
+          "normal_text": "No hay desplazamiento de las estructuras de la línea media.",
+          "concept": "desplazamiento o no de la línea media",
+          "omit_if_replaced_by_major_finding": false
+        },
+        {
+          "line_id": "sistema_ventricular_supratentorial",
+          "normal_text": "Sistema ventricular supratentorial de topografía y morfología normales.",
+          "concept": "topografía, morfología y simetría del sistema ventricular supratentorial",
+          "omit_if_replaced_by_major_finding": false
+        },
+        {
+          "line_id": "densidad_supratentorial",
+          "normal_text": "No se observan alteraciones de la densidad del tejido nervioso supratentorial.",
+          "concept": "densidad/señal del tejido nervioso supratentorial en general",
+          "omit_if_replaced_by_major_finding": true
+        },
+        {
+          "line_id": "surcos_corticales",
+          "normal_text": "Surcos corticales conservados.",
+          "concept": "estado de los surcos corticales (conservados, borrados, etc.)",
+          "omit_if_replaced_by_major_finding": false
+        },
+        {
+          "line_id": "lesiones_oseas",
+          "normal_text": "No se observan lesiones óseas.",
+          "concept": "presencia o ausencia de lesiones óseas en la calota",
+          "omit_if_replaced_by_major_finding": false
+        }
+      ]
+    }
   ],
   "expected_organs_or_regions": [
     "IV ventrículo",
@@ -19,11 +68,13 @@
     "estructuras de la línea media",
     "línea media",
     "sistema ventricular supratentorial",
+    "ventrículo lateral",
     "tejido nervioso supratentorial",
     "surcos corticales",
     "lesiones óseas",
     "calota",
     "parénquima",
+    "tálamo",
     "ventrículo",
     "ventrículos",
     "cisterna",
@@ -33,6 +84,5 @@
     "sustancia gris",
     "tronco encefálico",
     "cerebelo"
-  ],
-  "default_technique_text": "Se exploró el cerebro con cortes axiales, paralelos a la línea orbitomeatal, guiados por Scout View con ventana ósea."
+  ]
 }
