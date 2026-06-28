@@ -283,22 +283,44 @@ Prioridades, en este orden:
 ✅ Arquitectura completa definida (visión).
 ✅ Repositorio creado.
 ✅ 4 modelos implementados: `finding.py`, `confidence.py`, `status.py`, `recommendation.py`, `report.py`.
-✅ 4 engines del MVP implementados y validados: `parser_engine.py`, `template_engine.py`, `quality_engine.py`, `followup_engine.py`.
-✅ 4 templates JSON creados **y calibrados con dictados reales de Guille**: `tc_cerebro.json`, `rx_torax.json`, `rm_columna.json`, `eco_abdominal.json`.
+✅ 4 engines del MVP implementados: `parser_engine.py` (**v2**, ver más abajo), `template_engine.py`, `quality_engine.py`, `followup_engine.py`.
+✅ 4 templates JSON creados y calibrados con dictados reales de Guille: `tc_cerebro.json` (**v2**, estructura de secciones/líneas fijas), `rx_torax.json`, `rm_columna.json`, `eco_abdominal.json` (estos 3 últimos siguen en formato v1 — lista plana de `expected_organs_or_regions`, sin `sections`/`lines`).
 ✅ `integrations/claude_client.py`: conexión real y portable a la API de Anthropic (modelo `claude-sonnet-4-6`), no solo simulada en tests.
-✅ `run_pipeline_demo.py`: demo end-to-end del pipeline completo, con o sin API real (flag `--real`).
-✅ 6 tests creados y pasando: `test_templates.py` (13 checks), `test_quality_adversarial.py` (12 checks), `test_followup.py` (5 checks).
+✅ `run_pipeline_demo.py`: demo end-to-end del pipeline completo (basado en v1), con o sin API real (flag `--real`).
+✅ `line_based_report_engine.py` (**nuevo**, ver más abajo): motor de reemplazo de líneas sobre plantilla normal.
+✅ 6 tests creados y pasando (corren en modo offline/rules-only, siguen validando el comportamiento v1 retrocompatible): `test_templates.py` (13 checks), `test_quality_adversarial.py` (12 checks), `test_followup.py` (5 checks).
 
-**Decisiones de diseño tomadas durante la construcción** (documentadas en el código, resumidas aquí para referencia rápida):
-- Parser: extracción híbrida reglas-primero + IA de respaldo. Negaciones generan Finding con `status="NO_FINDING"` en vez de ser descartadas — preserva trazabilidad de qué fue evaluado.
-- El vocabulario de órganos/regiones reconocido por el parser viene del `expected_organs_or_regions` de cada template (parámetro `organ_hints`), no de una lista hardcodeada.
-- Normalización singular/plural simple (`_singularize_simple`) y de tildes (`_strip_accents`) en el parser, para tolerar variaciones reales de tipeo/dictado. Casos irregulares de plural (ej. "intervertebral"/"intervertebrales") se resuelven listando ambas formas explícitamente en el template JSON — nunca se adivina.
+### ⚠️ Cambio de arquitectura — Parser Engine v2 (jun 2026)
+
+A partir de un caso real de Guille ("lesión hipodensa paraventricular derecha de aspecto isquémico secuelar") que el parser v1 no pudo capturar — porque no contenía ninguna palabra de la lista fija de vocabulario, aunque es clínicamente un hallazgo inequívoco — se rediseñó el Parser Engine:
+
+- **v1 (original)**: reglas primero, IA solo como fallback cuando las reglas no alcanzan. IA = certeza LOW automática.
+- **v2 (actual)**: la IA es el mecanismo PRIMARIO de reconocimiento, usando conocimiento médico real (no una lista fija) para identificar hallazgos patológicos, incluyendo localizaciones indirectas ("paraventricular") y terminología descriptiva ("isquémico secuelar"). Las reglas pasan a un rol de **verificación posterior**: cada dato que la IA extrajo (medida, lateralidad) se confirma contra el texto literal del dictado. La certeza ya no depende de "vino de IA vs vino de reglas" — depende de si cada dato es verificable contra el texto original.
+- El modo offline (`call_claude=None`) se conserva como fallback degradado solo para tests sin API — en ese modo, el sistema vuelve a las reglas v1 y NO puede reconocer patología descrita con vocabulario fuera de la lista fija. **Esto significa que para detectar patología real en producción, el sistema depende de tener `ANTHROPIC_API_KEY` configurada.**
+- Bug corregido durante la calibración: la verificación de lateralidad fallaba por concordancia de género ("derecho" vs "derecha" en el texto real) — se corrigió comparando solo la raíz de la palabra.
+
+### ⚠️ Nuevo módulo — Line-Based Report Engine (jun 2026)
+
+Guille aclaró que su forma real de trabajo no es "construir un informe desde cero a partir de hallazgos", sino **editar un informe normal ya existente**, reemplazando solo las líneas afectadas por hallazgos patológicos, manteniendo intactas las líneas no mencionadas. Esto requirió:
+
+- **Nuevo formato de template** (`tc_cerebro.json` ya migrado, los otros 3 templates pendientes de migrar): en vez de una lista plana de regiones, ahora tiene `sections` → cada sección tiene `lines` fijas, cada línea con `line_id`, `normal_text`, `concept` (descripción clínica para que la IA pueda mapear), y `omit_if_replaced_by_major_finding`.
+- **`line_based_report_engine.py`**: la IA mapea cada hallazgo dictado a la línea de la plantilla que le corresponde (usando el campo `concept`), reemplazando esa línea específica. El orden final del informe SIEMPRE sigue el orden fijo de la plantilla, sin importar el orden en que se dictaron los hallazgos (validado explícitamente con test).
+- **Regla de omisión — corregida durante el diseño**: inicialmente se diseñó para omitir una línea genérica de normalidad solo si el hallazgo era "grande/expansivo". Guille corrigió esto: la omisión es **mecánica y determinística** — cualquier hallazgo patológico (`ACTIVE`) en una sección invalida automáticamente las líneas de esa sección marcadas `omit_if_replaced_by_major_finding=true`, sin importar tamaño ni gravedad. Esto evita que la IA tenga que juzgar severidad, que es presición clínica que no debe delegarse a una heurística.
+- **Seguridad preservada**: un hallazgo que la IA no puede mapear con confianza a ninguna línea NUNCA se descarta — aparece en una sección separada "HALLAZGOS SIN UBICAR" al final del informe, visible para revisión manual.
+- Validado con el caso real completo de Guille (lesión tumoral talámica con efecto de masa) — el resultado generado coincide línea por línea con su informe final real.
+
+⬜ **Pendiente — migrar los otros 3 templates** (`rx_torax.json`, `rm_columna.json`, `eco_abdominal.json`) al nuevo formato de `sections`/`lines`, siguiendo el patrón de `tc_cerebro.json`. Sin esto, `line_based_report_engine.py` solo funciona con TC cerebro.
+
+⬜ **Pendiente — actualizar los 6 tests existentes** para reflejar el parser v2 y el line_based_report_engine (hoy siguen validando el comportamiento v1, que se mantiene como fallback offline, pero no cubren el camino AI-primario ni el nuevo motor de líneas).
+
+⬜ **Pendiente — conexión real con la API**: todo lo construido hoy (parser v2, line_based_report_engine) depende de `call_claude` real para funcionar como está pensado. Sigue sin probarse con una `ANTHROPIC_API_KEY` real en un entorno real (ver Plan de próximos pasos).
+
+**Decisiones de diseño previas que se mantienen** (del diseño v1, documentadas en el código):
+- Negaciones generan Finding con `status="NO_FINDING"` en vez de ser descartadas — preserva trazabilidad de qué fue evaluado.
 - Quality Engine: 3 capas (estructural → coherencia con IA → bloqueo). Nunca corrige automáticamente, solo marca `FLAGGED` con motivo.
 - Followup Engine: umbral de cambio real = combinado, ≥3mm absoluto Y ≥20% relativo al tamaño previo (criterio tipo RECIST, decidido con Guille).
 
-**Calibración con dictados reales — hallazgos del proceso**: al probar el parser contra dictados reales de Guille (no inventados), se encontraron y corrigieron brechas reales de vocabulario y de patrones de negación en cada uno de los 4 templates — por ejemplo, "no se observan" (plural) no estaba cubierto, solo "no se observa" (singular); "uniforme" y "no evidencian" no estaban reconocidos como sinónimos de normalidad; "agujeros de conjunción" (término real usado) no coincidía con "forámenes de conjunción" (término que se había puesto inicialmente); "Ambos Riñones" (descripción conjunta) no coincidía con "riñón derecho"/"riñón izquierdo" (siempre separados). Esto confirma que la calibración con dictados reales no es opcional — el vocabulario inventado inicialmente difería sustancialmente del uso real en los 4 templates.
-
-⬜ **Pendiente — conexión real con la API**: el flujo con `call_claude` real (`integrations/claude_client.py`) está construido y probado con datos simulados, pero no se ha ejecutado todavía con una `ANTHROPIC_API_KEY` real (requiere un entorno con Python 3.9+; el Windows 7 de Guille no es compatible con versiones modernas de Python — ver nota de portabilidad más abajo).
+**Calibración con dictados reales — hallazgos del proceso**: al probar el parser v1 contra dictados reales de Guille (no inventados), se encontraron y corrigieron brechas reales de vocabulario y de patrones de negación en cada uno de los 4 templates — por ejemplo, "no se observan" (plural) no estaba cubierto, solo "no se observa" (singular); "uniforme" y "no evidencian" no estaban reconocidos como sinónimos de normalidad; "agujeros de conjunción" (término real usado) no coincidía con "forámenes de conjunción" (término que se había puesto inicialmente); "Ambos Riñones" (descripción conjunta) no coincidía con "riñón derecho"/"riñón izquierdo" (siempre separados). Esto confirmó que la calibración con dictados reales no es opcional. El mismo patrón se repitió al diseñar v2: el primer caso real probado ("lesión hipodensa paraventricular...") expuso que el enfoque de vocabulario fijo no escalaba a terminología patológica real, motivando el cambio de arquitectura.
 
 ## Plan de próximos pasos hacia uso diario (no implementado todavía)
 
@@ -312,3 +334,4 @@ Esto es lo que falta para pasar de "engines que funcionan en pruebas" a "herrami
 6. **Validación en uso real** durante un tiempo, antes de evaluar cualquier integración con PACS/RIS (ver sección de niveles más abajo).
 
 🚀 Próximo paso concreto sugerido: punto 1 (interfaz simple) + punto 2 (despliegue), siguiendo el mismo patrón ya usado para GuardIA — esto es lo que primero convierte el proyecto en algo usable, antes de sumar persistencia o integraciones.
+
