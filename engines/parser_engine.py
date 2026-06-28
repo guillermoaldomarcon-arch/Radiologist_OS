@@ -3,36 +3,59 @@ parser_engine.py
 
 Converts free-text dictation into a list of Finding objects.
 
-Design principle (per project philosophy):
-Rules first, AI only as fallback. Never invent findings, measurements,
-or laterality. If a sentence cannot be confidently parsed by rules and
-the AI fallback also cannot extract a clear Finding, the sentence is
-skipped and logged — NOT guessed.
+== DESIGN v2 (changed from v1) ==
 
-MVP scope:
-- Rule-based extraction handles clear, structured patterns (explicit
-  measurements with units, explicit laterality, explicit negation).
-- AI fallback (Claude) is used ONLY for sentences that contain
-  apparent clinical content but did not match any rule. The AI is
-  asked to return structured JSON only, never prose.
-- Anything extracted via the AI fallback is marked with
-  certainty="LOW" unless a rule independently confirms the same
-  finding, since AI-assisted extraction is inherently less verifiable
-  than a deterministic rule match.
+Previous design (v1, see parser_engine_v1_backup.py): rules-first,
+AI-as-fallback-only. This worked for clear structural patterns
+(explicit measurement + organ name from a fixed vocabulary) but
+failed on real dictation like "lesión hipodensa paraventricular
+derecha de aspecto isquémico secuelar" -- a clinically unambiguous
+pathological finding that doesn't literally contain any word from a
+fixed organ list, and that requires actual medical knowledge
+(hipodensa + isquémico + secuelar = sequela of an ischemic event) to
+recognize as a finding at all.
+
+Current design (v2), per Guille's explicit decision: the AI is now
+PRIMARY for recognizing whether a sentence describes a pathological
+finding and what its organ/location/laterality/measurement are -- it
+uses real medical knowledge, not a fixed vocabulary list. Rules no
+longer decide WHETHER something is a finding; they run AFTER the AI
+call, as a verification step, checking whether each specific claim
+the AI made (a measurement, a laterality term, an organ name) is
+actually present in the original text.
+
+Design principle (per project philosophy), reinterpreted for v2:
+"Never increase certainty" no longer means "AI output = LOW
+certainty by default, rules = HIGH by default." It means: certainty
+should reflect whether each individual claim is verifiable against
+the source text, regardless of whether AI or rules produced it. A
+measurement the AI extracted that IS literally in the text is just
+as verifiable as one a regex would have found. A claim that is NOT
+literally in the text (an inference, even a clinically reasonable
+one) is flagged with lower certainty and is exactly the kind of
+thing the radiologist should glance at before signing.
+
+Rules are NOT removed -- they still do two important jobs:
+1. Per-claim verification (see _verify_finding_against_text below).
+2. A safety-net pass over the AI's output for negation/normality
+   phrases the AI might have mis-classified as pathological (or vice
+   versa) -- see _cross_check_negation below.
+
+If `call_claude` is not provided, this module CANNOT recognize
+pathology from free text (the old rules-only path is preserved as a
+literal fallback only for offline/no-API testing -- see
+_extract_with_rules_only, used only when call_claude is None). This
+is a known, accepted limitation: without AI, the system only catches
+clinical content matching the legacy fixed vocabulary.
 """
 
 import json
 import re
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from finding import Finding
 
 
-# ---------------------------------------------------------------------------
-# Rule patterns
-# ---------------------------------------------------------------------------
-
-# Matches things like "15 mm", "2.3 cm", "1,5 cm"
 _MEASUREMENT_PATTERN = re.compile(
     r"(\d+(?:[.,]\d+)?)\s*(mm|cm)\b", re.IGNORECASE
 )
@@ -63,39 +86,10 @@ _ACCENT_MAP = str.maketrans("áéíóúÁÉÍÓÚ", "aeiouAEIOU")
 
 
 def _strip_accents(text: str) -> str:
-    """
-    Removes Spanish accent marks for comparison purposes only (never
-    used to alter what gets stored in a Finding's description — only
-    to make organ-hint matching tolerant of dictation/typing
-    inconsistencies like "oseas" vs "óseas", both of which are common
-    in real fast-typed dictation).
-    """
     return text.translate(_ACCENT_MAP)
 
 
 def _singularize_simple(word: str) -> str:
-    """
-    Deliberately simple singular/plural normalization for Spanish —
-    NOT a linguistic stemmer. Only handles the common regular case:
-    a word ending in a vowel followed by "s" (e.g. "discos" ->
-    "disco", "vesículas" -> "vesícula").
-
-    Handles multi-word terms (e.g. "discos intervertebrales") by
-    normalizing each word independently, since Spanish adjectives
-    agree in number with their noun ("disco intervertebral" /
-    "discos intervertebrales" both need normalizing, not just the
-    head noun).
-
-    This intentionally does NOT attempt irregular cases (e.g.
-    "tórax", which already ends in "x" and has no separate plural
-    form in this context, or "lápiz"/"lápices"-style changes). Those
-    cases must be handled explicitly by listing both forms in the
-    template's expected_organs_or_regions — silently guessing at
-    irregular pluralization is the kind of unverified assumption this
-    project's philosophy avoids. This function only removes
-    ambiguity in the common, safe case; it does not try to be
-    linguistically complete.
-    """
     def _singularize_word(w: str) -> str:
         if len(w) > 2 and w[-1] == "s" and w[-2] in "aeiouáéíóú":
             return w[:-1]
@@ -106,12 +100,6 @@ def _singularize_simple(word: str) -> str:
 
 
 def _organ_hint_matches(hint: str, sentence_lower: str) -> bool:
-    """
-    Matches an organ_hint against a sentence, tolerant of:
-    - simple regular singular/plural differences (see _singularize_simple)
-    - presence/absence of accent marks (e.g. "oseas" vs "óseas"),
-      common in fast-typed real dictation.
-    """
     hint_lower = hint.lower()
     sentence_no_accents = _strip_accents(sentence_lower)
     hint_no_accents = _strip_accents(hint_lower)
@@ -121,10 +109,6 @@ def _organ_hint_matches(hint: str, sentence_lower: str) -> bool:
     if hint_no_accents in sentence_no_accents:
         return True
 
-    # Try matching the singularized hint against the sentence, and
-    # the singularized sentence against the hint — covers both
-    # directions without needing to singularize every word in the
-    # sentence individually. Checked both with and without accents.
     singular_hint = _singularize_simple(hint_lower)
     singular_hint_no_accents = _strip_accents(singular_hint)
 
@@ -136,12 +120,6 @@ def _organ_hint_matches(hint: str, sentence_lower: str) -> bool:
     return False
 
 
-# Minimal fallback vocabulary, used ONLY if no organ_hints list is
-# provided by the caller. In normal operation, callers should pass
-# the `expected_organs_or_regions` list from the relevant template's
-# JSON definition (see template_engine.load_template), so the parser
-# recognizes the correct vocabulary for whatever study type is being
-# parsed instead of being limited to a single hardcoded list.
 _DEFAULT_ORGAN_HINTS = [
     "parénquima", "parenquima", "ventrículo", "ventriculo",
     "cisterna", "calota", "senos paranasales", "fosa posterior",
@@ -150,42 +128,137 @@ _DEFAULT_ORGAN_HINTS = [
 ]
 
 
-def _looks_clinical(sentence: str, organ_hints: List[str]) -> bool:
-    """
-    Heuristic: does this sentence look like it contains clinical
-    content worth trying to parse, as opposed to boilerplate
-    (e.g. "Técnica: TC de cerebro sin contraste.")?
-    Used only to decide whether to bother with the AI fallback —
-    never used to create a Finding directly.
-    """
-    lowered = sentence.lower()
-    if any(_organ_hint_matches(hint, lowered) for hint in organ_hints):
-        return True
-    if _MEASUREMENT_PATTERN.search(sentence):
-        return True
-    return False
+def _ai_extract_findings(
+    dictation_text: str, organ_hints: List[str], call_claude: Callable[[str], str]
+) -> List[dict]:
+    hints_text = ", ".join(organ_hints)
+
+    prompt = f"""Eres un asistente que extrae hallazgos radiológicos de un dictado médico en español, usando conocimiento médico real (terminología, patrones de enfermedad, sinónimos clínicos). NO te limites a buscar palabras exactas de una lista -- reconocé el significado clínico real, incluyendo localizaciones indirectas (ej. "paraventricular" implica relación con el ventrículo) y términos descriptivos de patología (ej. "hipodensa", "isquémico secuelar", "de aspecto inespecífico").
+
+Regiones/órganos típicos de este tipo de estudio (lista de referencia, NO exhaustiva -- puede haber otros): {hints_text}
+
+Para CADA hallazgo distinto (patológico O explícitamente normal) en el dictado, devolvé un objeto con estos campos exactos:
+
+{{
+  "organ": string,
+  "location": string or null,
+  "side": string or null,
+  "size_mm": number or null,
+  "description": string,
+  "is_pathological": boolean
+}}
+
+Reglas estrictas:
+- "description" debe ser un fragmento literal o casi literal del texto original -- NUNCA inventes ni agregues información que no esté en el dictado.
+- Si el dictado no menciona una medida explícita en mm/cm, "size_mm" debe ser null -- NUNCA estimes ni inventes un valor.
+- Si no hay un hallazgo claro, no incluyas esa frase.
+- Respondé ÚNICAMENTE con un array JSON, sin texto adicional, sin markdown.
+
+Dictado:
+\"\"\"{dictation_text}\"\"\""""
+
+    raw_response = call_claude(prompt)
+
+    try:
+        cleaned = raw_response.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.strip("`")
+            cleaned = cleaned.replace("json", "", 1).strip()
+        data = json.loads(cleaned)
+    except (json.JSONDecodeError, AttributeError):
+        return []
+
+    if not isinstance(data, list):
+        return []
+
+    return data
 
 
-def _extract_with_rules(sentence: str, organ_hints: List[str]) -> Optional[Finding]:
-    """
-    Attempts to build a Finding using only deterministic patterns.
-    Returns None if the sentence doesn't match a clear, confident
-    pattern — it does NOT guess.
+def _verify_finding_against_text(raw_finding: dict, dictation_text: str) -> str:
+    text_lower = dictation_text.lower()
+    text_no_accents = _strip_accents(text_lower)
 
-    Negation handling (Option B — explicit traceability):
-    A sentence like "Cisterna basal sin alteraciones." does NOT
-    describe a pathological finding. It describes an organ/region
-    that WAS evaluated and found normal. This is recorded as a
-    Finding with status="NO_FINDING" rather than being silently
-    dropped, so downstream engines (especially Followup) can later
-    tell "evaluated and normal" apart from "never evaluated".
+    size_mm = raw_finding.get("size_mm")
+    if size_mm is not None:
+        found_measurement = False
+        for match in _MEASUREMENT_PATTERN.finditer(dictation_text):
+            raw_value = match.group(1).replace(",", ".")
+            unit = match.group(2).lower()
+            matched_mm = float(raw_value) * (10.0 if unit == "cm" else 1.0)
+            if abs(matched_mm - size_mm) < 0.01:
+                found_measurement = True
+                break
+        if not found_measurement:
+            return "LOW"
 
-    A NO_FINDING Finding never carries a measurement or laterality
-    from a positive pattern match — if the sentence has both a
-    negation AND a measurement (e.g. "sin nódulos mayores a 5 mm"),
-    the negation takes precedence and the measurement is treated as
-    part of the negated description, not as a positive measurement.
-    """
+    side = raw_finding.get("side")
+    if side:
+        side_stem = _strip_accents(side.lower()).rstrip("oa")
+        if side_stem not in text_no_accents:
+            return "LOW"
+
+    description = raw_finding.get("description", "")
+    description_words = set(_strip_accents(description.lower()).split())
+    overlap = [w for w in description_words if w in text_no_accents]
+    overlap_ratio = len(overlap) / max(len(description_words), 1)
+
+    if overlap_ratio < 0.5:
+        return "LOW"
+    if overlap_ratio < 0.85:
+        return "MODERATE"
+
+    return "HIGH"
+
+
+def _cross_check_negation(raw_finding: dict, dictation_text: str) -> bool:
+    description = raw_finding.get("description", "")
+    is_pathological = raw_finding.get("is_pathological", True)
+
+    has_negation = bool(_NEGATION_PATTERN.search(description))
+
+    if has_negation and is_pathological:
+        return False
+
+    return True
+
+
+def ai_findings_to_objects(
+    raw_findings: List[dict], dictation_text: str
+) -> List[Finding]:
+    findings: List[Finding] = []
+
+    for raw in raw_findings:
+        organ = raw.get("organ")
+        if not organ:
+            continue
+
+        certainty = _verify_finding_against_text(raw, dictation_text)
+        negation_check_passed = _cross_check_negation(raw, dictation_text)
+
+        is_pathological = raw.get("is_pathological", True)
+        status = "ACTIVE" if is_pathological else "NO_FINDING"
+
+        if not negation_check_passed:
+            status = "FLAGGED"
+            certainty = "LOW"
+
+        findings.append(
+            Finding(
+                name=organ,
+                organ=organ,
+                location=raw.get("location"),
+                side=raw.get("side"),
+                size_mm=raw.get("size_mm") if is_pathological else None,
+                description=raw.get("description", ""),
+                certainty=certainty,
+                status=status,
+            )
+        )
+
+    return findings
+
+
+def _extract_with_rules_only(sentence: str, organ_hints: List[str]) -> Optional[Finding]:
     measurement_match = _MEASUREMENT_PATTERN.search(sentence)
     laterality_match = _LATERALITY_PATTERN.search(sentence)
     negation_match = _NEGATION_PATTERN.search(sentence)
@@ -198,23 +271,17 @@ def _extract_with_rules(sentence: str, organ_hints: List[str]) -> Optional[Findi
     if organ is None:
         return None
 
-    # Negation takes precedence: this is a "no pathological finding"
-    # record, not a positive finding, regardless of whether a
-    # measurement or laterality term also appears in the sentence.
     if negation_match:
         return Finding(
             name=organ,
             organ=organ,
             side=laterality_match.group(1).lower() if laterality_match else None,
-            size_mm=None,  # never attach a measurement to a negation
+            size_mm=None,
             description=sentence.strip(),
-            certainty="HIGH",  # explicit negation is a clear, confident pattern
+            certainty="HIGH",
             status="NO_FINDING",
         )
 
-    # No negation: rule only fires for a positive finding when we have
-    # an organ hint AND at least one of (measurement, laterality).
-    # Anything weaker is left for the AI fallback rather than guessed.
     if not (measurement_match or laterality_match):
         return None
 
@@ -239,100 +306,23 @@ def _extract_with_rules(sentence: str, organ_hints: List[str]) -> Optional[Findi
     )
 
 
-def _extract_with_ai(sentence: str, call_claude) -> Optional[Finding]:
-    """
-    AI fallback. `call_claude` is an injected function with signature
-    (prompt: str) -> str, so this module stays testable without a
-    live API dependency.
-
-    Asks for STRICT JSON only. If the response is not valid JSON, or
-    is missing the minimum required field ("name"/"organ"), this
-    returns None rather than guessing.
-    """
-    prompt = f"""Extract a single radiological finding from this sentence,
-if one is clearly present. Respond with ONLY a JSON object, no prose,
-no markdown fences. Use this exact schema:
-
-{{
-  "organ": string or null,
-  "location": string or null,
-  "side": string or null,
-  "size_mm": number or null,
-  "description": string,
-  "present": boolean
-}}
-
-If no clear finding is present, set "present": false and leave other
-fields null except "description" (copy the sentence as-is).
-
-Sentence: \"\"\"{sentence}\"\"\""""
-
-    raw_response = call_claude(prompt)
-
-    try:
-        cleaned = raw_response.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.strip("`")
-            cleaned = cleaned.replace("json", "", 1).strip()
-        data = json.loads(cleaned)
-    except (json.JSONDecodeError, AttributeError):
-        return None
-
-    if not data.get("present", False):
-        return None
-    if not data.get("organ"):
-        return None
-
-    return Finding(
-        name=data["organ"],
-        organ=data.get("organ"),
-        location=data.get("location"),
-        side=data.get("side"),
-        size_mm=data.get("size_mm"),
-        description=data.get("description", sentence.strip()),
-        certainty="LOW",  # AI-assisted extraction is always LOW by default
-        status="ACTIVE",
-    )
-
-
 def parse(
     dictation_text: str,
     call_claude=None,
     organ_hints: Optional[List[str]] = None,
 ) -> List[Finding]:
-    """
-    Main entry point. Splits dictation into sentences, applies rules
-    first, and falls back to AI extraction (if `call_claude` is
-    provided) only for sentences that look clinical but didn't match
-    a rule.
-
-    `organ_hints`: list of organ/region names this parser should
-    recognize. Callers should normally pass the
-    `expected_organs_or_regions` list from the relevant template's
-    JSON definition (template_engine.load_template(template_id)
-    ["expected_organs_or_regions"]), so the parser uses the correct
-    vocabulary for the study type being dictated — e.g. liver/spleen
-    terms for an abdominal ultrasound, vertebral terms for a spine
-    MRI, etc. If not provided, falls back to a minimal default
-    vocabulary (brain CT terms only) for backward compatibility.
-
-    `call_claude` is optional and injected by the caller so this
-    module has no hard dependency on a specific API client. If it is
-    None, sentences that need the AI fallback are simply skipped
-    (never guessed).
-    """
     hints = organ_hints if organ_hints is not None else _DEFAULT_ORGAN_HINTS
 
+    if call_claude is not None:
+        raw_findings = _ai_extract_findings(dictation_text, hints, call_claude)
+        return ai_findings_to_objects(raw_findings, dictation_text)
+
     findings: List[Finding] = []
-
-    sentences = [s.strip() for s in re.split(r"(?<=[.;])\s+", dictation_text) if s.strip()]
-
+    sentences = [
+        s.strip() for s in re.split(r"(?<=[.;])\s+", dictation_text) if s.strip()
+    ]
     for sentence in sentences:
-        finding = _extract_with_rules(sentence, hints)
-
-        if finding is None and _looks_clinical(sentence, hints) and call_claude is not None:
-            finding = _extract_with_ai(sentence, call_claude)
-
+        finding = _extract_with_rules_only(sentence, hints)
         if finding is not None:
             findings.append(finding)
 
