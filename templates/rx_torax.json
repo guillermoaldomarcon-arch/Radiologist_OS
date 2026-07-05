@@ -3,28 +3,16 @@
   "modality": "RX",
   "study_type": "torax",
   "display_name": "Radiografía de Tórax",
+  "default_technique_text": "PLACEHOLDER — completar con la técnica real (proyecciones, incidencia) antes de usar.",
   "sections": [
-    "indication",
-    "technique",
-    "findings",
-    "impression",
-    "recommendations"
+    {
+      "section_id": "hallazgos",
+      "section_title": "",
+      "lines": [
+        {"line_id": "campo_pulmonar", "normal_text": "No se identifican lesiones pleuro pulmonares activas.", "concept": "lesiones pleuropulmonares activas en los campos pulmonares", "omit_if_replaced_by_major_finding": false},
+        {"line_id": "relacion_cardio_toracica", "normal_text": "Relación cardio torácica conservada.", "concept": "relación cardio-torácica", "omit_if_replaced_by_major_finding": false}
+      ]
+    }
   ],
-  "expected_organs_or_regions": [
-    "lesiones pleuro pulmonares",
-    "lesión pleuro pulmonar",
-    "relación cardio torácica",
-    "relación cardiotorácica",
-    "campos pulmonares",
-    "pulmón derecho",
-    "pulmón izquierdo",
-    "silueta cardíaca",
-    "mediastino",
-    "hilios pulmonares",
-    "senos costofrénicos",
-    "diafragma",
-    "parrilla costal",
-    "partes blandas"
-  ],
-  "default_technique_text": "Radiografía de tórax frente, en inspiración."
+  "expected_organs_or_regions": ["campos pulmonares", "pleura", "silueta cardíaca", "relación cardio-torácica", "mediastino"]
 }
