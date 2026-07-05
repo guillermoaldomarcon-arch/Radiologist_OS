@@ -1,35 +1,22 @@
 {
   "template_id": "rm_columna",
   "modality": "RM",
-  "study_type": "columna",
-  "display_name": "RM de Columna",
+  "study_type": "columna_lumbar",
+  "display_name": "RM de Columna Lumbar",
+  "default_technique_text": "PLACEHOLDER — completar con la técnica real (secuencias, planos) antes de usar.",
   "sections": [
-    "indication",
-    "technique",
-    "findings",
-    "impression",
-    "recommendations"
+    {
+      "section_id": "hallazgos",
+      "section_title": "",
+      "lines": [
+        {"line_id": "cuerpos_vertebrales", "normal_text": "En imágenes sagitales, los cuerpos vertebrales presentan intensidad de señal uniforme.", "concept": "intensidad de señal de los cuerpos vertebrales", "omit_if_replaced_by_major_finding": true},
+        {"line_id": "alineacion", "normal_text": "Alineación fisiológica normal de los cuerpos vertebrales.", "concept": "alineación de los cuerpos vertebrales", "omit_if_replaced_by_major_finding": false},
+        {"line_id": "discos", "normal_text": "Discos intervertebrales lumbares con su núcleo pulposo y anillo fibroso periférico de intensidad de señal normal.", "concept": "señal e integridad de discos intervertebrales lumbares (núcleo pulposo y anillo fibroso)", "omit_if_replaced_by_major_finding": false},
+        {"line_id": "raices_agujeros", "normal_text": "Las raíces nerviosas en cortes sagitales, se visualizan en los agujeros de conjunción, con su trayectoria e intensidad de señal conservada.", "concept": "trayectoria y señal de las raíces nerviosas en los agujeros de conjunción", "omit_if_replaced_by_major_finding": false},
+        {"line_id": "canal_raquideo", "normal_text": "Los diferentes diámetros del canal raquídeo se encuentran dentro de los límites normales.", "concept": "diámetros del canal raquídeo", "omit_if_replaced_by_major_finding": false},
+        {"line_id": "cono_cola_saco", "normal_text": "El cono medular, las raíces de la cola de caballo y el saco dural no evidencian alteraciones de la intensidad de señal.", "concept": "señal del cono medular, raíces de la cola de caballo y saco dural", "omit_if_replaced_by_major_finding": true}
+      ]
+    }
   ],
-  "expected_organs_or_regions": [
-    "cuerpos vertebrales",
-    "cuerpo vertebral",
-    "discos intervertebrales",
-    "disco intervertebral",
-    "canal raquídeo",
-    "médula espinal",
-    "forámenes de conjunción",
-    "foramen de conjunción",
-    "agujeros de conjunción",
-    "agujero de conjunción",
-    "articulaciones facetarias",
-    "articulación facetaria",
-    "partes blandas paravertebrales",
-    "alineación vertebral",
-    "cono medular",
-    "raíces nerviosas",
-    "raíz nerviosa",
-    "cola de caballo",
-    "saco dural"
-  ],
-  "default_technique_text": "RM de columna, secuencias multiplanares, sin contraste."
+  "expected_organs_or_regions": ["cuerpos vertebrales", "discos intervertebrales", "disco intervertebral", "raíces nerviosas", "agujeros de conjunción", "canal raquídeo", "cono medular", "cola de caballo", "saco dural", "columna lumbar"]
 }
