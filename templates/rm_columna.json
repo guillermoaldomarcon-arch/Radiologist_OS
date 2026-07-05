@@ -3,7 +3,7 @@
   "modality": "RM",
   "study_type": "columna_lumbar",
   "display_name": "RM de Columna Lumbar",
-  "default_technique_text": "PLACEHOLDER — completar con la técnica real (secuencias, planos) antes de usar.",
+  "default_technique_text": "Se realizaron cortes axiales y sagitales de la columna lumbosacra en secuencias T1, T2 y Flash.",
   "sections": [
     {
       "section_id": "hallazgos",
