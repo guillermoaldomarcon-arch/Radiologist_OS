@@ -3,27 +3,20 @@
   "modality": "ECO",
   "study_type": "abdominal",
   "display_name": "Ecografía Abdominal",
+  "default_technique_text": "El estudio ecográfico efectuado a su paciente muestra",
   "sections": [
-    "indication",
-    "technique",
-    "findings",
-    "impression",
-    "recommendations"
+    {
+      "section_id": "hallazgos",
+      "section_title": "",
+      "lines": [
+        {"line_id": "higado", "normal_text": "Hígado de tamaño y ecogenicidad normal, sin lesiones focales del parénquima, ni dilatación de la vía biliar.", "concept": "tamaño, ecogenicidad, lesiones focales del parénquima hepático y dilatación de la vía biliar", "omit_if_replaced_by_major_finding": false},
+        {"line_id": "vesicula", "normal_text": "Vesícula biliar es de forma y tamaño normal, sin evidencia sonográfica de litiasis en su interior, la pared es de espesor normal.", "concept": "forma, tamaño, litiasis y espesor parietal de la vesícula biliar", "omit_if_replaced_by_major_finding": false},
+        {"line_id": "pancreas", "normal_text": "Páncreas de tamaño y ecoestructura homogénea sin alteraciones.", "concept": "tamaño y ecoestructura del páncreas", "omit_if_replaced_by_major_finding": false},
+        {"line_id": "aorta_vena_cava", "normal_text": "Aorta abdominal y vena cava inferior permeable, de calibre normal.", "concept": "permeabilidad y calibre de aorta abdominal y vena cava inferior", "omit_if_replaced_by_major_finding": false},
+        {"line_id": "rinones", "normal_text": "Ambos Riñones de forma, tamaño y posición normal, conservan la relación corticomedular y no muestran dilatación de los sistemas colectores.", "concept": "forma, tamaño, posición, relación corticomedular y dilatación pielocalicial de ambos riñones", "omit_if_replaced_by_major_finding": false},
+        {"line_id": "bazo", "normal_text": "Bazo de dimensiones y ecoestructura normal, sin alteraciones.", "concept": "dimensiones y ecoestructura del bazo", "omit_if_replaced_by_major_finding": false}
+      ]
+    }
   ],
-  "expected_organs_or_regions": [
-    "hígado",
-    "vesícula biliar",
-    "vía biliar",
-    "páncreas",
-    "riñón",
-    "riñones",
-    "riñón derecho",
-    "riñón izquierdo",
-    "bazo",
-    "aorta abdominal",
-    "vena cava inferior",
-    "vejiga",
-    "líquido libre"
-  ],
-  "default_technique_text": "Ecografía abdominal en tiempo real, modo B."
+  "expected_organs_or_regions": ["hígado", "vesícula biliar", "vía biliar", "páncreas", "aorta abdominal", "vena cava inferior", "riñón", "riñones", "bazo", "litiasis", "lesión focal"]
 }
