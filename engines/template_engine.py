@@ -24,7 +24,7 @@ from finding import Finding
 from report import Report
 
 
-_TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
+_TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "..", "templates")
 
 
 class TemplateNotFoundError(Exception):
