@@ -17,23 +17,24 @@ only what the dictation actually addresses -- matching how Guille
 actually works (a normal template he edits, not a blank page he
 fills in).
 
-The AI is used to do the matching: given the full set of normal
-lines (each with its `concept`) and the dictated pathological
-findings, it decides which line_id each finding corresponds to. This
-requires real clinical understanding (e.g. recognizing that "lesión
-expansiva talámica derecha" relates to the supratentorial density
-line, while "ventrículo lateral derecho disminuido" relates to the
-"sistema_ventricular_supratentorial" line) -- exactly why this is
-AI-primary, like the v2 parser.
+The AI is used to do the matching AND the composition: given the
+full set of normal lines (each with its `concept`) and the dictated
+pathological findings, it decides which line_id each finding
+corresponds to, and composes the final sentence for each affected
+line, preserving whatever part of the normal text isn't contradicted
+by the dictated findings.
 
 Safety principles preserved:
 - The AI NEVER invents a finding not in the dictation; it only maps
   EXISTING dictated findings (already extracted by parser_engine) to
-  template line_ids.
+  template line_ids, and composes sentences strictly from those
+  findings plus the template's own normal text.
 - If the AI cannot confidently map a finding to any line_id, that
   finding is NOT silently dropped -- it's appended in a clearly
   marked section so the radiologist sees it and can place it
   manually. This is a deliberate "fail visibly, not silently" choice.
+- Multiple findings mapped to the SAME line are never silently
+  overwritten -- they are all folded into one composed sentence.
 - Order of dictation does NOT determine order in the final report --
   the final report always follows the template's fixed line order,
   per Guille's explicit requirement that this must work regardless
@@ -74,15 +75,14 @@ def _match_findings_to_lines(
     call_claude: Callable[[str], str],
 ) -> dict:
     """
-    Asks Claude to map each pathological (ACTIVE) finding to the
-    line_id it corresponds to, and to indicate whether any OTHER
-    line should be omitted as a side effect (e.g. a large expansive
-    lesion makes the generic "densidad normal" line for that section
-    contradictory).
+    Asks Claude to (1) map each pathological (ACTIVE) finding to the
+    line_id it corresponds to, and (2) compose the final sentence for
+    each affected line, combining the still-valid parts of the normal
+    text with the dictated finding(s).
 
     Returns a dict:
         {
-          "line_id": {"action": "replace", "finding_index": int},
+          "line_id": {"action": "replace", "composed_line": str},
           ...
           "_unmatched": [finding_index, ...]
         }
@@ -105,7 +105,16 @@ def _match_findings_to_lines(
         for l in flat_lines
     )
 
-    prompt = f"""Tenés una plantilla de informe radiológico normal, compuesta por líneas fijas, y una lista de hallazgos patológicos ya extraídos de un dictado. Tu tarea es decidir, para cada hallazgo, a qué línea de la plantilla corresponde clínicamente (es decir, qué línea normal ese hallazgo patológico debería reemplazar), usando tu conocimiento médico real.
+    prompt = f"""Tenés una plantilla de informe radiológico normal, compuesta por líneas fijas, y una lista de hallazgos patológicos ya extraídos de un dictado. Tu tarea tiene dos partes.
+
+PARTE 1 -- MATCHING: para cada hallazgo, decidí a qué línea de la plantilla corresponde clínicamente (qué línea normal ese hallazgo patológico afecta), usando tu conocimiento médico real. Puede haber MÁS DE UN hallazgo para la misma línea (ej: "paredes engrosadas" y "litiasis" pueden ser dos hallazgos distintos que afectan ambos a la línea de la vesícula) -- NUNCA descartes un hallazgo solo porque otro ya fue asignado a la misma línea.
+
+PARTE 2 -- COMPOSICIÓN: para cada línea que recibió uno o más hallazgos, redactá la oración final que reemplaza el texto normal de esa línea, siguiendo estas reglas estrictas:
+- Conservá TEXTUALMENTE (o casi textualmente, ajustando solo la gramática para que la oración quede coherente) cualquier atributo del texto normal original que NINGÚN hallazgo contradiga (ej: si el texto normal dice "forma y tamaño normal" y ningún hallazgo dictado menciona forma ni tamaño, esa parte se mantiene).
+- Reemplazá o agregá ÚNICAMENTE los atributos que los hallazgos dictados mencionan explícitamente.
+- Si hay más de un hallazgo para la misma línea, integralos TODOS en una sola oración coherente.
+- NUNCA agregues ningún dato clínico, medida, lateralidad o hallazgo que no esté presente en los hallazgos dictados. No aumentes ni disminuyas certeza. Si tenés dudas sobre cómo integrar un atributo, priorizá conservar el texto normal antes que inventar redacción clínica no dictada.
+- Mantené el mismo registro y estilo que el texto normal original de esa línea.
 
 LÍNEAS DE LA PLANTILLA:
 {lines_text}
@@ -119,11 +128,15 @@ Respondé ÚNICAMENTE con un objeto JSON con esta forma exacta:
   "matches": [
     {{"finding_index": int, "line_id": string}}
   ],
+  "composed_lines": [
+    {{"line_id": string, "composed_line": string}}
+  ],
   "unmatched_finding_indices": [int]
 }}
 
 Donde:
-- "matches": para cada hallazgo que SÍ corresponde claramente a una línea, indicá su índice y el line_id que reemplaza.
+- "matches": para cada hallazgo que SÍ corresponde claramente a una línea, indicá su índice y el line_id que afecta. Un mismo line_id puede aparecer en más de un match.
+- "composed_lines": una entrada por cada line_id presente en "matches", con la oración final ya redactada según las reglas de la PARTE 2.
 - "unmatched_finding_indices": índices de hallazgos que NO podés mapear con confianza a ninguna línea -- NUNCA fuerces un mapeo dudoso, es preferible dejarlo sin mapear.
 
 No incluyas texto adicional, solo el JSON."""
@@ -139,15 +152,42 @@ No incluyas texto adicional, solo el JSON."""
     except (json.JSONDecodeError, AttributeError):
         return {"_unmatched": list(range(len(findings)))}
 
-    result = {}
-
+    matched_line_ids = set()
     matched_indices = set()
     for match in data.get("matches", []):
         line_id = match.get("line_id")
         finding_index = match.get("finding_index")
         if line_id is not None and finding_index is not None:
-            result[line_id] = {"action": "replace", "finding_index": finding_index}
+            matched_line_ids.add(line_id)
             matched_indices.add(finding_index)
+
+    composed_by_line_id = {}
+    for entry in data.get("composed_lines", []):
+        line_id = entry.get("line_id")
+        composed_line = entry.get("composed_line")
+        if line_id is not None and composed_line:
+            composed_by_line_id[line_id] = composed_line
+
+    result = {}
+    for line_id in matched_line_ids:
+        composed_line = composed_by_line_id.get(line_id)
+        if composed_line:
+            result[line_id] = {"action": "replace", "composed_line": composed_line}
+        else:
+            # Fail visibly, not silently: si la IA matcheo la linea pero
+            # no genero composed_line (respuesta incompleta/malformada),
+            # no descartamos el hallazgo -- usamos la descripcion cruda
+            # como fallback, peor que una oracion compuesta pero mejor
+            # que perder el hallazgo sin dejar rastro.
+            fallback_indices = [
+                m["finding_index"] for m in data.get("matches", [])
+                if m.get("line_id") == line_id
+            ]
+            fallback_text = "; ".join(
+                findings[i].description for i in fallback_indices
+                if 0 <= i < len(findings)
+            )
+            result[line_id] = {"action": "replace", "composed_line": fallback_text}
 
     all_indices = set(range(len(findings)))
     truly_unmatched = all_indices - matched_indices
@@ -219,9 +259,7 @@ def build_line_based_report(
             action_entry = mapping.get(line_id)
 
             if action_entry is not None and action_entry.get("action") == "replace":
-                finding_index = action_entry["finding_index"]
-                finding = pathological_findings[finding_index]
-                section_lines.append(finding.description)
+                section_lines.append(action_entry["composed_line"])
                 continue
 
             omit_if_major = line.get("omit_if_replaced_by_major_finding", False)
