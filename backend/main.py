@@ -1,28 +1,5 @@
 """
 backend/main.py
-
-Backend FastAPI minimo para Radiologist_OS.
-
-Pipeline real de produccion:
-    parser_engine.parse()
-        -> line_based_report_engine.build_line_based_report()
-        -> line_based_report_engine.render_report_text()
-
-No usa template_engine.build_report() ni quality_engine.py (este
-ultimo esta roto/incompleto). Decision de diseno explicita del
-proyecto, no descuido.
-
-=== AGREGADO: 3 motores asesores ===
-devil_advocate_engine, differential_engine, diagnosis_phrasing_engine
-corren DESPUES de parser_engine.parse(), sobre los mismos Finding
-objects que ya usa build_line_based_report(). Ninguno modifica
-`findings` ni `report_text`. Cada uno esta envuelto en try/except
-propio -- si alguno falla, NUNCA debe tumbar la generacion del
-informe real.
-
-quality_issues se pasa como None a devil_advocate_engine.review()
-porque quality_engine.py esta roto/incompleto (misma decision que ya
-aplica el resto de este archivo).
 """
 
 import os
@@ -45,6 +22,7 @@ from line_based_report_engine import build_line_based_report, render_report_text
 import devil_advocate_engine
 import differential_engine
 import diagnosis_phrasing_engine
+import quality_engine
 
 
 app = FastAPI(title="Radiologist_OS API", version="0.1.0")
@@ -106,6 +84,12 @@ class PhrasingResultOut(BaseModel):
     evidence_source: str
 
 
+class QualityIssueOut(BaseModel):
+    finding_name: str | None
+    reason: str
+    layer: int
+
+
 class ReportResponse(BaseModel):
     template_id: str
     display_name: str
@@ -114,6 +98,8 @@ class ReportResponse(BaseModel):
     devil_questions: list[DevilQuestionOut] = []
     differential_panel: list[DifferentialStateOut] = []
     phrasing_suggestions: list[PhrasingResultOut] = []
+    quality_issues: list[QualityIssueOut] = []
+    releasable: bool = True
 
 
 def _devil_question_to_out(q) -> DevilQuestionOut:
@@ -142,6 +128,13 @@ def _phrasing_result_to_out(r) -> PhrasingResultOut:
         finding_name=r.finding_name, diagnosis_key=r.diagnosis_key,
         options=[PhrasingOptionOut(style=o.style, text=o.text) for o in r.options],
         resolved_style=r.resolved_style, evidence_source=r.evidence_source,
+    )
+
+
+def _quality_issue_to_out(qi) -> QualityIssueOut:
+    return QualityIssueOut(
+        finding_name=qi.finding.name if qi.finding else None,
+        reason=qi.reason, layer=qi.layer,
     )
 
 
@@ -192,10 +185,29 @@ def create_report(req: ReportRequest):
     report_text = render_report_text(template, report_dict)
     modality = template.get("modality", "")
 
+    # Quality Engine corre DESPUES de armar el texto del informe (nunca
+    # antes: build_line_based_report() solo toma findings ACTIVE, asi
+    # que flaguear antes harÃ­a desaparecer el hallazgo del informe sin
+    # dejar rastro). review() es puro -- no muta status todavÃ­a.
     try:
-        devil_questions_raw = devil_advocate_engine.review(findings, modality=modality, quality_issues=None)
+        quality_issues = quality_engine.review(
+            findings, expected_organs=template["expected_organs_or_regions"],
+            dictation_text=req.dictation_text, call_claude=call_claude,
+        )
+    except Exception:
+        quality_issues = []
+
+    # devil_advocate corre con los findings TODAVIA en status=ACTIVE:
+    # su Regla F necesita verlos asÃ­ para poder avisar "hay hallazgos
+    # marcados, resolvelos antes de cerrar la impresiÃ³n". ReciÃ©n
+    # DESPUES de esta llamada se aplican los flags reales (Layer 3).
+    try:
+        devil_questions_raw = devil_advocate_engine.review(findings, modality=modality, quality_issues=quality_issues)
     except Exception:
         devil_questions_raw = []
+
+    quality_engine.apply_flags(quality_issues)
+    releasable = not any(f.status == "FLAGGED" for f in findings)
 
     try:
         differential_raw = differential_engine.evaluate_all(findings, clinical_indication=req.indication or "")
@@ -215,4 +227,6 @@ def create_report(req: ReportRequest):
         devil_questions=[_devil_question_to_out(q) for q in devil_questions_raw],
         differential_panel=[_differential_state_to_out(s) for s in differential_raw],
         phrasing_suggestions=[_phrasing_result_to_out(r) for r in phrasing_raw],
+        quality_issues=[_quality_issue_to_out(qi) for qi in quality_issues],
+        releasable=releasable,
     )
