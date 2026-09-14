@@ -191,8 +191,8 @@ def create_report(req: ReportRequest):
     # dejar rastro). review() es puro -- no muta status todavÃ­a.
     try:
         quality_issues = quality_engine.review(
-            findings, expected_organs=template["expected_organs_or_regions"],
-            dictation_text=req.dictation_text, call_claude=call_claude,
+            findings, expected_organs_or_regions=template["expected_organs_or_regions"],
+            original_text=req.dictation_text, call_claude=call_claude,
         )
     except Exception:
         quality_issues = []
