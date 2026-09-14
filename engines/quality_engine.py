@@ -300,13 +300,23 @@ def review(
     optional by design (e.g. offline/no-API testing), matching Parser
     Engine's own fallback pattern.
 
-    Layer 3 is applied here, not as a separate function: every
-    finding with at least one issue (from either layer) gets
-    status="FLAGGED". This is the ONLY mutation this module performs
-    -- size_mm, side, organ, and description are never touched, only
-    the status field that marks a finding for mandatory radiologist
-    review before the report can be released (see report.py's
-    recompute_status, which blocks release on any FLAGGED finding).
+    IMPORTANT — this function is PURE: it does NOT mutate any
+    Finding's status. It only detects and returns issues. Call
+    apply_flags() explicitly, and only once every other engine that
+    needs to see the finding as still ACTIVE has already run.
+
+    Why the mutation is a separate step: devil_advocate_engine.py's
+    Rule F (suggest_impression_level) is explicitly designed to
+    receive this module's `quality_issues` list while the flagged
+    findings are STILL status=="ACTIVE" -- it cross-references
+    quality_issues by finding name against its own `active` list to
+    decide whether to show "resolvé los flags antes de cerrar la
+    impresión". If this module flipped status to FLAGGED before
+    devil_advocate_engine.review() ran, that finding would no longer
+    appear in `active` at all, and Rule F would never fire -- silently
+    breaking a warning that's specifically meant to reach the
+    radiologist. Confirmed by test: the exact failure this ordering
+    prevents.
     """
     layer1_issues = check_layer1(findings, expected_organs)
     layer1_flagged_indices = {
@@ -320,8 +330,21 @@ def review(
             findings, dictation_text, call_claude, skip_indices=layer1_flagged_indices
         )
 
-    all_issues = layer1_issues + layer2_issues
-    for issue in all_issues:
-        issue.finding.status = "FLAGGED"
+    return layer1_issues + layer2_issues
 
-    return all_issues
+
+def apply_flags(issues: List[QualityIssue]) -> None:
+    """
+    Layer 3. Applies status="FLAGGED" to every finding referenced in
+    `issues`. This is the ONLY function in this module that mutates
+    anything -- size_mm, side, organ, and description are never
+    touched by any part of this engine, only this one status field.
+
+    Call this AFTER every engine that needs to see the finding as
+    ACTIVE has already run (currently: devil_advocate_engine.review()).
+    Engines that run after apply_flags() (differential_engine,
+    diagnosis_phrasing_engine) will correctly skip flagged findings,
+    since they already filter on status=="ACTIVE" by their own design.
+    """
+    for issue in issues:
+        issue.finding.status = "FLAGGED"
