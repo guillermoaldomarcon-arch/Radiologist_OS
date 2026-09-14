@@ -106,7 +106,7 @@ def _check_laterality_contradiction(finding: Finding) -> Optional[str]:
 
 
 def _check_organ_not_in_template(
-    finding: Finding, expected_organs: List[str]
+    finding: Finding, expected_organs_or_regions: List[str]
 ) -> Optional[str]:
     """
     Flags a finding whose organ doesn't match (even loosely, by
@@ -122,7 +122,7 @@ def _check_organ_not_in_template(
         return None
 
     organ_norm = _strip_accents(finding.organ.lower().strip())
-    expected_norm = [_strip_accents(o.lower().strip()) for o in expected_organs]
+    expected_norm = [_strip_accents(o.lower().strip()) for o in expected_organs_or_regions]
 
     if any(organ_norm in e or e in organ_norm for e in expected_norm):
         return None
@@ -167,24 +167,25 @@ def _check_duplicates(findings: List[Finding]) -> dict:
 
 
 def check_layer1(
-    findings: List[Finding], expected_organs: List[str]
+    findings: List[Finding], expected_organs_or_regions: List[str]
 ) -> List[QualityIssue]:
     """
-    Runs all Layer 1 checks. Only ACTIVE findings are checked --
-    NO_FINDING and FLAGGED findings have nothing structural to verify
-    here (FLAGGED findings were already flagged upstream, e.g. by
-    Parser Engine's negation safety-net).
+    Runs all Layer 1 checks. Runs over EVERY finding regardless of
+    status -- a NO_FINDING statement about an organ that doesn't
+    belong to the active template (e.g. "bazo de tamaño normal"
+    dictated during a brain CT) is exactly the kind of cross-study
+    mix-up this layer exists to catch, whether or not the statement
+    itself describes pathology. Only skips findings already
+    status=="FLAGGED" (nothing more to add structurally).
 
     Per finding, checks stop at the first issue found (laterality,
-    then organ, then duplicate) -- one reason is enough to flag; this
-    engine's job is to flag, not to enumerate every possible problem
-    with a single finding.
+    then organ, then duplicate) -- one reason is enough to flag.
     """
     issues: List[QualityIssue] = []
     duplicate_map = _check_duplicates(findings)
 
     for i, f in enumerate(findings):
-        if f.status != "ACTIVE":
+        if f.status == "FLAGGED":
             continue
 
         reason = _check_laterality_contradiction(f)
@@ -192,7 +193,7 @@ def check_layer1(
             issues.append(QualityIssue(f, reason, layer=1))
             continue
 
-        reason = _check_organ_not_in_template(f, expected_organs)
+        reason = _check_organ_not_in_template(f, expected_organs_or_regions)
         if reason:
             issues.append(QualityIssue(f, reason, layer=1))
             continue
@@ -208,7 +209,7 @@ def check_layer1(
 # ---------------------------------------------------------------------------
 
 def _ask_coherence(
-    finding: Finding, dictation_text: str, call_claude: Callable[[str], str]
+    finding: Finding, original_text: str, call_claude: Callable[[str], str]
 ) -> Optional[str]:
     """
     Asks Claude a single closed question about ONE finding: is it
@@ -232,13 +233,13 @@ Hallazgo extraído:
 organ={finding.organ!r}, location={finding.location!r}, side={finding.side!r}, size_mm={finding.size_mm}, description={finding.description!r}
 
 Dictado original:
-\"\"\"{dictation_text}\"\"\"
+\"\"\"{original_text}\"\"\"
 
 Respondé ÚNICAMENTE con un objeto JSON de esta forma exacta, sin texto adicional, sin markdown:
 
-{{"supported": boolean, "unsupported_claim": string or null}}
+{{"supported": boolean, "reason": string or null}}
 
-"supported" es false si y solo si hay un dato del hallazgo que no está respaldado por el dictado original. "unsupported_claim" describe brevemente cuál dato, solo si supported es false; en caso contrario, null."""
+"supported" es false si y solo si hay un dato del hallazgo que no está respaldado por el dictado original. "reason" describe brevemente cuál dato y por qué, solo si supported es false; en caso contrario, null."""
 
     raw_response = call_claude(prompt)
 
@@ -252,7 +253,7 @@ Respondé ÚNICAMENTE con un objeto JSON de esta forma exacta, sin texto adicion
         return None
 
     if data.get("supported") is False:
-        claim = data.get("unsupported_claim") or "dato no especificado"
+        claim = data.get("reason") or "dato no especificado"
         return (
             f"Verificación IA (capa 2): posible dato no respaldado por el "
             f"dictado original ({claim})."
@@ -262,7 +263,7 @@ Respondé ÚNICAMENTE con un objeto JSON de esta forma exacta, sin texto adicion
 
 def check_layer2(
     findings: List[Finding],
-    dictation_text: str,
+    original_text: str,
     call_claude: Callable[[str], str],
     skip_indices: Optional[set] = None,
 ) -> List[QualityIssue]:
@@ -276,7 +277,7 @@ def check_layer2(
     for i, f in enumerate(findings):
         if i in skip_indices or f.status != "ACTIVE":
             continue
-        reason = _ask_coherence(f, dictation_text, call_claude)
+        reason = _ask_coherence(f, original_text, call_claude)
         if reason:
             issues.append(QualityIssue(f, reason, layer=2))
 
@@ -289,8 +290,8 @@ def check_layer2(
 
 def review(
     findings: List[Finding],
-    expected_organs: List[str],
-    dictation_text: str = "",
+    expected_organs_or_regions: List[str],
+    original_text: str = "",
     call_claude: Optional[Callable[[str], str]] = None,
 ) -> List[QualityIssue]:
     """
@@ -303,7 +304,8 @@ def review(
     IMPORTANT — this function is PURE: it does NOT mutate any
     Finding's status. It only detects and returns issues. Call
     apply_flags() explicitly, and only once every other engine that
-    needs to see the finding as still ACTIVE has already run.
+    needs to see the finding as still ACTIVE has already run. See
+    apply_quality_check() below for the simpler combined entry point.
 
     Why the mutation is a separate step: devil_advocate_engine.py's
     Rule F (suggest_impression_level) is explicitly designed to
@@ -318,7 +320,7 @@ def review(
     radiologist. Confirmed by test: the exact failure this ordering
     prevents.
     """
-    layer1_issues = check_layer1(findings, expected_organs)
+    layer1_issues = check_layer1(findings, expected_organs_or_regions)
     layer1_flagged_indices = {
         i for i, f in enumerate(findings)
         if any(issue.finding is f for issue in layer1_issues)
@@ -327,7 +329,7 @@ def review(
     layer2_issues: List[QualityIssue] = []
     if call_claude is not None:
         layer2_issues = check_layer2(
-            findings, dictation_text, call_claude, skip_indices=layer1_flagged_indices
+            findings, original_text, call_claude, skip_indices=layer1_flagged_indices
         )
 
     return layer1_issues + layer2_issues
@@ -348,3 +350,27 @@ def apply_flags(issues: List[QualityIssue]) -> None:
     """
     for issue in issues:
         issue.finding.status = "FLAGGED"
+
+
+def apply_quality_check(
+    findings: List[Finding],
+    expected_organs_or_regions: List[str],
+    original_text: str = "",
+    call_claude: Optional[Callable[[str], str]] = None,
+) -> List[QualityIssue]:
+    """
+    Convenience entry point matching the project's original test
+    suite (tests/test_quality_adversarial.py): computes issues AND
+    applies the FLAGGED status in a single call. Equivalent to
+    review() followed immediately by apply_flags().
+
+    backend/main.py does NOT use this function directly -- it calls
+    review() and apply_flags() separately, with
+    devil_advocate_engine.review() run in between (see review()'s
+    docstring for why that ordering matters). Use
+    apply_quality_check() for standalone use, tests, or any future
+    caller that doesn't have that specific ordering constraint.
+    """
+    issues = review(findings, expected_organs_or_regions, original_text, call_claude)
+    apply_flags(issues)
+    return issues
