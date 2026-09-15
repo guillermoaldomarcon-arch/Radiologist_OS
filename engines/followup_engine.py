@@ -87,6 +87,16 @@ def _classify_pair(previous: Finding, current: Finding) -> str:
     previous and current report) into one of:
     STABLE, PROGRESSIVE, RESOLVED, NEW, INDETERMINATE.
     """
+    # Si cualquiera de los dos quedó FLAGGED por el Quality Engine, no
+    # hay base confiable para clasificar el cambio. Tratarlo como
+    # ACTIVE/NO_FINDING silenciaría un dato dudoso detrás de una
+    # clasificación de confianza (ej: un previo FLAGGED leído como
+    # NO_FINDING podría salir como RESOLVED sin serlo).
+    if previous.status == "FLAGGED" or current.status == "FLAGGED":
+        return "INDETERMINATE"
+
+    
+    
     prev_active = previous.status == "ACTIVE"
     curr_active = current.status == "ACTIVE"
 
@@ -111,12 +121,6 @@ def _classify_pair(previous: Finding, current: Finding) -> str:
         delta = current.size_mm - previous.size_mm
         if delta > 0:
             return "PROGRESSIVE"
-        # Shrinking is still "changed", but the MVP's classification
-        # set has no dedicated "improving" category yet (ROADMAP:
-        # Digital Twin Engine may refine this). For now, a decrease
-        # is reported as INDETERMINATE rather than silently folded
-        # into STABLE or labeled with a category that doesn't exist
-        # in this enum's MVP scope.
         return "INDETERMINATE"
 
     # Both ACTIVE but at least one has no measurement to compare —
