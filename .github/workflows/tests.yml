@@ -16,6 +16,9 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
       - name: Run test_templates.py
         run: python3 tests/test_templates.py
 
@@ -24,3 +27,6 @@ jobs:
 
       - name: Run test_followup.py
         run: python3 tests/test_followup.py
+
+      - name: Run test_main_followup.py
+        run: python3 tests/test_main_followup.py
