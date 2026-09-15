@@ -18,6 +18,8 @@ from pydantic import BaseModel, Field
 from template_engine import load_template, TemplateNotFoundError
 from parser_engine import parse
 from line_based_report_engine import build_line_based_report, render_report_text
+from report import Report
+from followup_engine import compare_reports
 
 import devil_advocate_engine
 import differential_engine
@@ -44,6 +46,11 @@ class ReportRequest(BaseModel):
     template_id: str = Field(..., description="Ej: 'tc_cerebro', 'eco_abdominal'")
     dictation_text: str = Field(..., description="Dictado libre del medico")
     indication: str | None = Field(default=None, description="Motivo de estudio")
+    previous_dictation_text: str | None = Field(
+        default=None,
+        description="Dictado de los hallazgos patologicos del informe previo, "
+                     "para comparacion evolutiva. Opcional.",
+    )
 
 
 class DevilQuestionOut(BaseModel):
@@ -90,6 +97,13 @@ class QualityIssueOut(BaseModel):
     layer: int
 
 
+class FollowupResultOut(BaseModel):
+    finding_name: str
+    organ: str | None
+    classification: str
+    matched_previous_description: str | None
+
+
 class ReportResponse(BaseModel):
     template_id: str
     display_name: str
@@ -99,6 +113,7 @@ class ReportResponse(BaseModel):
     differential_panel: list[DifferentialStateOut] = []
     phrasing_suggestions: list[PhrasingResultOut] = []
     quality_issues: list[QualityIssueOut] = []
+    followup: list[FollowupResultOut] = []
     releasable: bool = True
 
 
@@ -135,6 +150,16 @@ def _quality_issue_to_out(qi) -> QualityIssueOut:
     return QualityIssueOut(
         finding_name=qi.finding.name if qi.finding else None,
         reason=qi.reason, layer=qi.layer,
+    )
+
+
+def _followup_result_to_out(r: dict) -> FollowupResultOut:
+    matched = r["matched_previous"]
+    return FollowupResultOut(
+        finding_name=r["finding"].name,
+        organ=r["finding"].organ,
+        classification=r["classification"],
+        matched_previous_description=matched.description if matched else None,
     )
 
 
@@ -187,8 +212,8 @@ def create_report(req: ReportRequest):
 
     # Quality Engine corre DESPUES de armar el texto del informe (nunca
     # antes: build_line_based_report() solo toma findings ACTIVE, asi
-    # que flaguear antes harÃ­a desaparecer el hallazgo del informe sin
-    # dejar rastro). review() es puro -- no muta status todavÃ­a.
+    # que flaguear antes haría desaparecer el hallazgo del informe sin
+    # dejar rastro). review() es puro -- no muta status todavía.
     try:
         quality_issues = quality_engine.review(
             findings, expected_organs_or_regions=template["expected_organs_or_regions"],
@@ -198,8 +223,8 @@ def create_report(req: ReportRequest):
         quality_issues = []
 
     # devil_advocate corre con los findings TODAVIA en status=ACTIVE:
-    # su Regla F necesita verlos asÃ­ para poder avisar "hay hallazgos
-    # marcados, resolvelos antes de cerrar la impresiÃ³n". ReciÃ©n
+    # su Regla F necesita verlos así para poder avisar "hay hallazgos
+    # marcados, resolvelos antes de cerrar la impresión". Recién
     # DESPUES de esta llamada se aplican los flags reales (Layer 3).
     try:
         devil_questions_raw = devil_advocate_engine.review(findings, modality=modality, quality_issues=quality_issues)
@@ -208,6 +233,40 @@ def create_report(req: ReportRequest):
 
     quality_engine.apply_flags(quality_issues)
     releasable = not any(f.status == "FLAGGED" for f in findings)
+
+    followup_results_out: list[FollowupResultOut] = []
+    if req.previous_dictation_text and req.previous_dictation_text.strip():
+        try:
+            previous_findings = parse(
+                req.previous_dictation_text, call_claude=call_claude,
+                organ_hints=template["expected_organs_or_regions"],
+            )
+            quality_engine.apply_quality_check(
+                previous_findings,
+                expected_organs_or_regions=template["expected_organs_or_regions"],
+                original_text=req.previous_dictation_text,
+                call_claude=call_claude,
+            )
+        except ClaudeClientError as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Error llamando a Claude (informe previo): {e}",
+            )
+
+        previous_report = Report(
+            indication=req.indication or "",
+            technique=template.get("default_technique_text", ""),
+            findings=previous_findings,
+            template_id=req.template_id,
+        )
+        current_report = Report(
+            indication=req.indication or "",
+            technique=template.get("default_technique_text", ""),
+            findings=findings,
+            template_id=req.template_id,
+        )
+        followup_raw = compare_reports(previous_report, current_report)
+        followup_results_out = [_followup_result_to_out(r) for r in followup_raw]
 
     try:
         differential_raw = differential_engine.evaluate_all(findings, clinical_indication=req.indication or "")
@@ -228,5 +287,6 @@ def create_report(req: ReportRequest):
         differential_panel=[_differential_state_to_out(s) for s in differential_raw],
         phrasing_suggestions=[_phrasing_result_to_out(r) for r in phrasing_raw],
         quality_issues=[_quality_issue_to_out(qi) for qi in quality_issues],
+        followup=followup_results_out,
         releasable=releasable,
     )
