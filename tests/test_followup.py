@@ -15,6 +15,9 @@ and confirms compare_reports() classifies each finding correctly:
   - The no-prior-study case: every ACTIVE finding becomes NEW and
     every NO_FINDING finding becomes STABLE, since there is no
     baseline to claim PROGRESSIVE/RESOLVED against.
+  - FLAGGED: if either side of a matched pair was flagged by Quality
+    Engine, the pair is never silently classified as STABLE/RESOLVED —
+    it stays INDETERMINATE.
 
 Run with: python3 tests/test_followup.py
 """
@@ -46,7 +49,7 @@ def _check(label: str, condition: bool, detail: str = ""):
 
 
 def test_followup_with_prior_study():
-    print("\n[1/2] Comparación contra estudio previo")
+    print("\n[1/3] Comparación contra estudio previo")
 
     previo = Report(
         indication="Control",
@@ -77,21 +80,18 @@ def test_followup_with_prior_study():
         indication="Control evolutivo",
         technique="TC de cerebro sin contraste.",
         findings=[
-            # 10mm -> 14mm: delta=4mm (>=3mm) y 40% (>=20%) -> PROGRESSIVE
             Finding(
                 name="parénquima", organ="parénquima", location="frontal",
                 side="derecho", size_mm=14.0,
                 description="Hipodensidad de 14mm en frontal derecho.",
                 certainty="HIGH", status="ACTIVE",
             ),
-            # NO_FINDING -> ACTIVE: NEW
             Finding(
                 name="cisterna", organ="cisterna", location="basal",
                 side=None, size_mm=None,
                 description="Cisterna basal con leve asimetría.",
                 certainty="MODERATE", status="ACTIVE",
             ),
-            # NO_FINDING -> NO_FINDING: STABLE
             Finding(
                 name="calota", organ="calota", location=None,
                 side=None, size_mm=None,
@@ -122,7 +122,7 @@ def test_followup_with_prior_study():
 
 
 def test_followup_without_prior_study():
-    print("\n[2/2] Sin estudio previo disponible (paciente nuevo)")
+    print("\n[2/3] Sin estudio previo disponible (paciente nuevo)")
 
     actual = Report(
         indication="Primer estudio",
@@ -158,6 +158,45 @@ def test_followup_without_prior_study():
     )
 
 
+def test_followup_flagged_finding_never_silently_classified():
+    print("\n[3/3] Finding FLAGGED no se clasifica en silencio")
+
+    previo = Report(
+        indication="Control",
+        technique="TC de cerebro sin contraste.",
+        findings=[
+            Finding(
+                name="parénquima", organ="parénquima", location="frontal",
+                side="derecho", size_mm=10.0,
+                description="Hipodensidad de 10mm en frontal derecho.",
+                certainty="LOW", status="FLAGGED",
+            ),
+        ],
+    )
+
+    actual = Report(
+        indication="Control evolutivo",
+        technique="TC de cerebro sin contraste.",
+        findings=[
+            Finding(
+                name="parénquima", organ="parénquima", location="frontal",
+                side="derecho", size_mm=None,
+                description="Sin hipodensidad significativa.",
+                certainty="HIGH", status="NO_FINDING",
+            ),
+        ],
+    )
+
+    results = compare_reports(previo, actual)
+    by_organ = {r["finding"].organ: r["classification"] for r in results}
+
+    _check(
+        "previo FLAGGED nunca se clasifica RESOLVED sin más — queda INDETERMINATE",
+        by_organ.get("parénquima") == "INDETERMINATE",
+        f"(obtuvo {by_organ.get('parénquima')})",
+    )
+
+
 if __name__ == "__main__":
     print("=" * 70)
     print("TEST: Followup Engine — comparación longitudinal")
@@ -165,6 +204,7 @@ if __name__ == "__main__":
 
     test_followup_with_prior_study()
     test_followup_without_prior_study()
+    test_followup_flagged_finding_never_silently_classified()
 
     print("\n" + "=" * 70)
     print(f"RESULTADO: {_PASS_COUNT} PASS, {_FAIL_COUNT} FAIL")
