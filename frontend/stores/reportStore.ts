@@ -265,7 +265,15 @@ export const useReportStore = create<ReportState>((set, get) => ({
 
   reset: () =>
     set({
-      ...initialRequestState,
+      // Mantiene el template seleccionado -- en una guardia es común dictar
+      // varios estudios seguidos de la misma modalidad. Si preferís que
+      // "Nuevo informe" también deseleccione el template, sacá esta línea
+      // y dejá que se aplique initialRequestState completo.
+      templateId: get().templateId,
+      dictationText: "",
+      indication: "",
+      comparativeMode: false,
+      previousDictationText: "",
       currentReport: null,
       reportDraftText: "",
       error: null,
