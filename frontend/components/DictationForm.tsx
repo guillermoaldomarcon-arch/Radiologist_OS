@@ -1,7 +1,7 @@
 "use client";
 
 import { useReportStore } from "@/stores/reportStore";
-import { Loader2, Sparkles } from "lucide-react";
+import { Loader2, RotateCcw, Sparkles } from "lucide-react";
 
 export default function DictationForm() {
   const {
@@ -12,15 +12,31 @@ export default function DictationForm() {
     previousDictationText,
     isLoading,
     error,
+    currentReport,
     setIndication,
     setDictationText,
     setComparativeMode,
     setPreviousDictationText,
     generateReport,
+    reset,
   } = useReportStore();
 
   return (
     <div className="border-t border-zinc-800 p-3 space-y-2 bg-zinc-900">
+      {(currentReport || dictationText.trim()) && (
+        <button
+          onClick={() => {
+            if (window.confirm("¿Limpiar el dictado actual y empezar un informe nuevo?")) {
+              reset();
+            }
+          }}
+          className="w-full flex items-center justify-center gap-2 text-xs px-2 py-1.5 rounded-md border border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:border-zinc-600"
+        >
+          <RotateCcw className="w-3.5 h-3.5" />
+          Nuevo informe
+        </button>
+      )}
+
       <div>
         <label className="text-[11px] text-zinc-500 uppercase tracking-wide">
           Motivo de estudio
