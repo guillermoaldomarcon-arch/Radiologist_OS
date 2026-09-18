@@ -12,7 +12,9 @@ function DevilQuestionCard({
   onAnswer: (text: string) => void;
 }) {
   const [freeText, setFreeText] = useState("");
-  const candidateEntries = Object.entries(question.closure_candidates ?? {});
+  const candidateEntries = Object.entries(question.closure_candidates ?? {}).filter(
+    ([, value]) => value !== null && value !== undefined && String(value).trim() !== ""
+  );
   const missingFieldNames = Object.keys(question.missing_fields ?? {});
   const hasCandidates = candidateEntries.length > 0;
 
@@ -106,7 +108,7 @@ export default function AssistancePanel() {
   if (!currentReport) {
     return (
       <div className="h-full flex items-center justify-center text-zinc-500 text-sm p-4 text-center">
-        Generá un informe para ver diferenciales, fraseo y el abogado del diablo.
+        GenerÃ¡ un informe para ver diferenciales, fraseo y el abogado del diablo.
       </div>
     );
   }
