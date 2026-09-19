@@ -113,6 +113,12 @@ interface ReportState {
   isLoading: boolean;
   error: string | null;
 
+  // Dictado por voz (Panel 1). Separado de isLoading/error (que son del
+  // ciclo de POST /report) para que una transcripción fallida no tape la
+  // pantalla del informe -- el error se muestra junto al botón de dictar.
+  isTranscribing: boolean;
+  transcriptionError: string | null;
+
   // Acciones
   fetchTemplates: () => Promise<void>;
   setTemplateId: (templateId: string) => void;
@@ -123,6 +129,14 @@ interface ReportState {
   setReportDraftText: (text: string) => void;
 
   generateReport: () => Promise<void>;
+
+  /**
+   * Sube el audio grabado a POST /voice/transcribe (Whisper vía Groq en
+   * el backend) y agrega el texto transcripto al dictado existente.
+   * El audio nunca se persiste en ningún lado -- se recibe, se
+   * transcribe y se descarta, ida y vuelta.
+   */
+  transcribeAudio: (audioBlob: Blob) => Promise<void>;
 
   /**
    * Inserta una sugerencia de fraseo al final del borrador editable.
@@ -166,8 +180,11 @@ export const useReportStore = create<ReportState>((set, get) => ({
   reportDraftText: "",
   isLoading: false,
   error: null,
+  isTranscribing: false,
+  transcriptionError: null,
 
   fetchTemplates: async () => {
+    if (get().templates.length > 0) return;
     set({ templatesLoading: true, error: null });
     try {
       const res = await fetch(`${API_BASE_URL}/templates`);
@@ -263,6 +280,39 @@ export const useReportStore = create<ReportState>((set, get) => ({
     await get().generateReport();
   },
 
+  transcribeAudio: async (audioBlob: Blob) => {
+    set({ isTranscribing: true, transcriptionError: null });
+
+    const formData = new FormData();
+    formData.append("file", audioBlob, "dictado.webm");
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/voice/transcribe`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const detail = await res.json().catch(() => null);
+        throw new Error(detail?.detail ?? `POST /voice/transcribe -> ${res.status}`);
+      }
+
+      const data: { text: string } = await res.json();
+      const transcribed = data.text.trim();
+
+      if (transcribed) {
+        const current = get().dictationText;
+        set({ dictationText: current ? `${current} ${transcribed}` : transcribed });
+      }
+      set({ isTranscribing: false });
+    } catch (err) {
+      set({
+        transcriptionError: err instanceof Error ? err.message : "Error transcribiendo el audio",
+        isTranscribing: false,
+      });
+    }
+  },
+
   reset: () =>
     set({
       // Mantiene el template seleccionado -- en una guardia es común dictar
@@ -277,5 +327,6 @@ export const useReportStore = create<ReportState>((set, get) => ({
       currentReport: null,
       reportDraftText: "",
       error: null,
+      transcriptionError: null,
     }),
 }));
