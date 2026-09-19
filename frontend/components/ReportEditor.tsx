@@ -103,7 +103,7 @@ export default function ReportEditor() {
         <textarea
           value={reportDraftText}
           onChange={(e) => setReportDraftText(e.target.value)}
-          className="w-full h-full min-h-[280px] resize-none bg-zinc-800/50 text-zinc-100 text-sm leading-relaxed p-3 rounded-md border border-zinc-700 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
+          className="w-full h-full min-h-[280px] resize-none bg-zinc-800/50 text-zinc-100 text-sm leading-relaxed p-3 rounded-md border border-zinc-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
         />
 
         {unmatched_findings.length > 0 && (
