@@ -108,7 +108,7 @@ export default function AssistancePanel() {
   if (!currentReport) {
     return (
       <div className="h-full flex items-center justify-center text-zinc-500 text-sm p-4 text-center">
-        GenerÃ¡ un informe para ver diferenciales, fraseo y el abogado del diablo.
+        Generá un informe para ver diferenciales, fraseo y el abogado del diablo.
       </div>
     );
   }
