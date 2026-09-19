@@ -11,7 +11,7 @@ for _subdir in ("", "models", "engines", "integrations"):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -25,6 +25,7 @@ import devil_advocate_engine
 import differential_engine
 import diagnosis_phrasing_engine
 import quality_engine
+import voice_engine
 
 
 app = FastAPI(title="Radiologist_OS API", version="0.1.0")
@@ -184,6 +185,25 @@ def list_templates():
         except Exception:
             continue
     return result
+
+
+@app.post("/voice/transcribe")
+async def transcribe_voice(file: UploadFile = File(...)):
+    """
+    Recibe audio dictado, lo transcribe (Whisper vía Groq) y devuelve
+    el texto. El audio no se guarda en ningun lado -- se lee en
+    memoria, se transcribe, y se descarta al terminar el request.
+    """
+    audio_bytes = await file.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="El audio recibido esta vacio.")
+
+    try:
+        text = voice_engine.transcribe(audio_bytes, filename=file.filename or "audio.webm")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"No se pudo transcribir el audio: {e}")
+
+    return {"text": text}
 
 
 @app.post("/report", response_model=ReportResponse)
