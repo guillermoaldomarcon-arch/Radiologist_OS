@@ -2,7 +2,9 @@
 
 import { useRef, useState } from "react";
 import { useReportStore } from "@/stores/reportStore";
-import { Loader2, Mic, Square, RotateCcw, Sparkles } from "lucide-react";
+import { Loader2, Mic, Square, RotateCcw, Sparkles, Undo2 } from "lucide-react";
+
+const HOLD_THRESHOLD_MS = 300;
 
 export default function DictationForm() {
   const {
@@ -28,17 +30,17 @@ export default function DictationForm() {
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const pressStartRef = useRef<number>(0);
+  const recordingModeRef = useRef<"toggle" | "hold" | null>(null);
+  const preDictationTextRef = useRef<string>("");
 
-  // MediaRecorder + backend (Whisper vía Groq) en vez de la Web Speech API
-  // del navegador: funciona dentro de navegadores in-app (WhatsApp,
-  // Instagram) donde SpeechRecognition no está disponible, y tiene mejor
-  // precisión con terminología médica en español.
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
+      preDictationTextRef.current = dictationText; // snapshot para "Deshacer"
 
       mediaRecorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
@@ -53,19 +55,51 @@ export default function DictationForm() {
       mediaRecorder.start();
       setIsRecording(true);
     } catch {
-      // Permiso de mic denegado, o no hay mic disponible (poco común en
-      // navegadores in-app -- a diferencia de SpeechRecognition, getUserMedia
-      // sí suele estar disponible ahí).
-      window.alert(
-        "No se pudo acceder al micrófono. Revisá los permisos del navegador."
-      );
+      window.alert("No se pudo acceder al micrófono. Revisá los permisos del navegador.");
     }
   };
 
   const stopRecording = () => {
     mediaRecorderRef.current?.stop();
     setIsRecording(false);
+    recordingModeRef.current = null;
   };
+
+  // La grabación arranca SIEMPRE de inmediato al presionar (sin delay,
+  // para no perder el audio del comienzo de la frase). La decisión
+  // toggle-vs-hold se toma recién al soltar, según cuánto duró la
+  // presión.
+  const handlePointerDown = () => {
+    if (isTranscribing) return;
+
+    if (isRecording && recordingModeRef.current === "toggle") {
+      // Ya grababa en modo manos libres -> este segundo tap lo detiene.
+      stopRecording();
+      return;
+    }
+
+    pressStartRef.current = Date.now();
+    startRecording();
+  };
+
+  const handlePointerUp = () => {
+    if (!isRecording) return;
+    const heldMs = Date.now() - pressStartRef.current;
+
+    if (heldMs < HOLD_THRESHOLD_MS) {
+      // Tap corto -> queda grabando en modo manos libres (toggle).
+      recordingModeRef.current = "toggle";
+    } else {
+      // Hold -> al soltar, para.
+      stopRecording();
+    }
+  };
+
+  const handleUndoLastDictation = () => {
+    setDictationText(preDictationTextRef.current);
+  };
+
+  const canUndo = preDictationTextRef.current !== "" && dictationText !== preDictationTextRef.current;
 
   return (
     <div className="border-t border-zinc-800 p-3 space-y-2 bg-zinc-900">
@@ -98,29 +132,18 @@ export default function DictationForm() {
       <div>
         <div className="flex items-center justify-between">
           <label className="text-[11px] text-zinc-500 uppercase tracking-wide">Dictado</label>
-          <button
-            type="button"
-            onClick={isRecording ? stopRecording : startRecording}
-            disabled={isTranscribing}
-            title={isRecording ? "Detener y transcribir" : "Dictar por voz"}
-            className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md transition-colors ${
-              isRecording
-                ? "bg-red-500/15 text-red-400 animate-pulse"
-                : isTranscribing
-                ? "bg-zinc-800 text-zinc-600 cursor-not-allowed"
-                : "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20"
-            }`}
-          >
-            {isTranscribing ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : isRecording ? (
-              <Square className="w-3 h-3 fill-current" />
-            ) : (
-              <Mic className="w-3.5 h-3.5" />
-            )}
-            {isTranscribing ? "Transcribiendo..." : isRecording ? "Grabando..." : "Dictar"}
-          </button>
+          {canUndo && (
+            <button
+              type="button"
+              onClick={handleUndoLastDictation}
+              className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200"
+            >
+              <Undo2 className="w-3 h-3" />
+              Deshacer último dictado
+            </button>
+          )}
         </div>
+
         <textarea
           value={dictationText}
           onChange={(e) => setDictationText(e.target.value)}
@@ -130,6 +153,35 @@ export default function DictationForm() {
         {transcriptionError && (
           <p className="text-xs text-red-400 mt-1">{transcriptionError}</p>
         )}
+
+        <button
+          type="button"
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
+          onPointerLeave={handlePointerUp}
+          disabled={isTranscribing}
+          className={`w-full mt-2 flex items-center justify-center gap-2 text-sm font-medium py-4 rounded-lg select-none transition-colors ${
+            isRecording
+              ? "bg-red-500/20 text-red-400 animate-pulse"
+              : isTranscribing
+              ? "bg-zinc-800 text-zinc-600 cursor-not-allowed"
+              : "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 active:bg-blue-500/30"
+          }`}
+        >
+          {isTranscribing ? (
+            <>
+              <Loader2 className="w-5 h-5 animate-spin" /> Transcribiendo...
+            </>
+          ) : isRecording ? (
+            <>
+              <Square className="w-4 h-4 fill-current" /> Grabando... soltá para parar
+            </>
+          ) : (
+            <>
+              <Mic className="w-5 h-5" /> Mantené presionado para dictar, o tocá para manos libres
+            </>
+          )}
+        </button>
       </div>
 
       <label className="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer select-none">
@@ -163,11 +215,7 @@ export default function DictationForm() {
         disabled={isLoading || !templateId || !dictationText.trim()}
         className="w-full flex items-center justify-center gap-2 text-sm px-3 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-500 disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed transition-colors"
       >
-        {isLoading ? (
-          <Loader2 className="w-4 h-4 animate-spin" />
-        ) : (
-          <Sparkles className="w-4 h-4" />
-        )}
+        {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
         Generar informe
       </button>
     </div>
