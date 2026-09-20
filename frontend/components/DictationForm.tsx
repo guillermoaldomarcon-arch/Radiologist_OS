@@ -4,6 +4,8 @@ import { useRef, useState } from "react";
 import { useReportStore } from "@/stores/reportStore";
 import { Loader2, Mic, Square, RotateCcw, Sparkles, Undo2 } from "lucide-react";
 
+const MIN_RECORDING_MS = 600;
+
 export default function DictationForm() {
   const {
     templateId,
@@ -30,6 +32,7 @@ export default function DictationForm() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const preDictationTextRef = useRef<string>("");
+  const recordingStartRef = useRef<number>(0);
 
   const startRecording = async () => {
     try {
@@ -38,6 +41,7 @@ export default function DictationForm() {
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
       preDictationTextRef.current = dictationText;
+      recordingStartRef.current = Date.now();
 
       mediaRecorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
@@ -45,6 +49,16 @@ export default function DictationForm() {
 
       mediaRecorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
+
+        const elapsedMs = Date.now() - recordingStartRef.current;
+        if (elapsedMs < MIN_RECORDING_MS) {
+          // Grabación demasiado corta para contener habla real (permiso
+          // recién otorgado, toque accidental, etc.) -- se descarta sin
+          // llamar al backend, para no alucinar texto tipo "Gracias por
+          // ver el video".
+          return;
+        }
+
         const audioBlob = new Blob(chunksRef.current, { type: "audio/webm" });
         if (audioBlob.size > 0) await transcribeAudio(audioBlob);
       };
@@ -62,15 +76,12 @@ export default function DictationForm() {
     setIsRecording(false);
   };
 
-  // --- Manos libres: un toque para grabar, otro toque para parar ---
   const handleToggleClick = () => {
     if (isTranscribing || holdActive) return;
     if (isRecording) stopRecording();
     else startRecording();
   };
 
-  // --- Push-to-talk: mantener apretado graba, soltar corta. Sin
-  // heurística de tiempo -- cada botón hace una sola cosa siempre. ---
   const handleHoldStart = () => {
     if (isTranscribing || isRecording) return;
     setHoldActive(true);
@@ -143,8 +154,6 @@ export default function DictationForm() {
           <p className="text-xs text-red-400 mt-1">{transcriptionError}</p>
         )}
 
-        {/* Dos botones, mismo tamaño -- cuál usás depende de si tenés
-            dónde apoyar el celular en el momento, no es fijo. */}
         <button
           type="button"
           onClick={handleToggleClick}
