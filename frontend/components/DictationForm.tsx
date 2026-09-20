@@ -57,20 +57,20 @@ export default function DictationForm() {
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current?.state === "inactive") return; // evita stop() doble
+    if (mediaRecorderRef.current?.state === "inactive") return;
     mediaRecorderRef.current?.stop();
     setIsRecording(false);
   };
 
-  // --- Manos libres: idéntico al botón que ya sabíamos que funcionaba ---
+  // --- Manos libres: un toque para grabar, otro toque para parar ---
   const handleToggleClick = () => {
     if (isTranscribing || holdActive) return;
     if (isRecording) stopRecording();
     else startRecording();
   };
 
-  // --- Push-to-talk: sin heurística de tiempo. Abajo = graba, arriba
-  // (por up, cancel, o el dedo se va) = para. Siempre. ---
+  // --- Push-to-talk: mantener apretado graba, soltar corta. Sin
+  // heurística de tiempo -- cada botón hace una sola cosa siempre. ---
   const handleHoldStart = () => {
     if (isTranscribing || isRecording) return;
     setHoldActive(true);
@@ -143,47 +143,47 @@ export default function DictationForm() {
           <p className="text-xs text-red-400 mt-1">{transcriptionError}</p>
         )}
 
-        <div className="mt-2 grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={handleToggleClick}
-            disabled={isTranscribing || holdActive}
-            className={`flex items-center justify-center gap-2 text-sm font-medium py-4 rounded-lg transition-colors ${
-              isRecording && !holdActive
-                ? "bg-red-500/20 text-red-400 animate-pulse"
-                : isTranscribing
-                ? "bg-zinc-800 text-zinc-600 cursor-not-allowed"
-                : "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20"
-            }`}
-          >
-            {isRecording && !holdActive ? (
-              <Square className="w-4 h-4 fill-current" />
-            ) : (
-              <Mic className="w-5 h-5" />
-            )}
-            Manos libres
-          </button>
-
-          <button
-            type="button"
-            onPointerDown={handleHoldStart}
-            onPointerUp={handleHoldEnd}
-            onPointerCancel={handleHoldEnd}
-            onPointerLeave={handleHoldEnd}
-            disabled={isTranscribing || (isRecording && !holdActive)}
-            style={{ touchAction: "none" }}
-            className={`flex items-center justify-center gap-2 text-sm font-medium py-4 rounded-lg select-none transition-colors ${
-              holdActive
-                ? "bg-red-500/20 text-red-400 animate-pulse"
-                : isTranscribing
-                ? "bg-zinc-800 text-zinc-600 cursor-not-allowed"
-                : "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 active:bg-blue-500/30"
-            }`}
-          >
+        {/* Dos botones, mismo tamaño -- cuál usás depende de si tenés
+            dónde apoyar el celular en el momento, no es fijo. */}
+        <button
+          type="button"
+          onClick={handleToggleClick}
+          disabled={isTranscribing || holdActive}
+          className={`w-full mt-2 flex items-center justify-center gap-2 text-sm font-medium py-4 rounded-lg transition-colors ${
+            isRecording && !holdActive
+              ? "bg-red-500/20 text-red-400 animate-pulse"
+              : isTranscribing
+              ? "bg-zinc-800 text-zinc-600 cursor-not-allowed"
+              : "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20"
+          }`}
+        >
+          {isRecording && !holdActive ? (
+            <Square className="w-4 h-4 fill-current" />
+          ) : (
             <Mic className="w-5 h-5" />
-            Mantener para hablar
-          </button>
-        </div>
+          )}
+          Manos libres — un toque para grabar, otro para terminar
+        </button>
+
+        <button
+          type="button"
+          onPointerDown={handleHoldStart}
+          onPointerUp={handleHoldEnd}
+          onPointerCancel={handleHoldEnd}
+          onPointerLeave={handleHoldEnd}
+          disabled={isTranscribing || (isRecording && !holdActive)}
+          style={{ touchAction: "none" }}
+          className={`w-full mt-2 flex items-center justify-center gap-2 text-sm font-medium py-4 rounded-lg select-none transition-colors ${
+            holdActive
+              ? "bg-red-500/20 text-red-400 animate-pulse"
+              : isTranscribing
+              ? "bg-zinc-800 text-zinc-600 cursor-not-allowed"
+              : "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 active:bg-blue-500/30"
+          }`}
+        >
+          <Mic className="w-5 h-5" />
+          Mantener para hablar — soltá para cortar
+        </button>
       </div>
 
       <label className="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer select-none">
