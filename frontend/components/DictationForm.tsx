@@ -4,8 +4,6 @@ import { useRef, useState } from "react";
 import { useReportStore } from "@/stores/reportStore";
 import { Loader2, Mic, Square, RotateCcw, Sparkles, Undo2 } from "lucide-react";
 
-const HOLD_THRESHOLD_MS = 300;
-
 export default function DictationForm() {
   const {
     templateId,
@@ -28,10 +26,9 @@ export default function DictationForm() {
   } = useReportStore();
 
   const [isRecording, setIsRecording] = useState(false);
+  const [holdActive, setHoldActive] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
-  const pressStartRef = useRef<number>(0);
-  const recordingModeRef = useRef<"toggle" | "hold" | null>(null);
   const preDictationTextRef = useRef<string>("");
 
   const startRecording = async () => {
@@ -40,7 +37,7 @@ export default function DictationForm() {
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
-      preDictationTextRef.current = dictationText; // snapshot para "Deshacer"
+      preDictationTextRef.current = dictationText;
 
       mediaRecorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
@@ -60,39 +57,31 @@ export default function DictationForm() {
   };
 
   const stopRecording = () => {
+    if (mediaRecorderRef.current?.state === "inactive") return; // evita stop() doble
     mediaRecorderRef.current?.stop();
     setIsRecording(false);
-    recordingModeRef.current = null;
   };
 
-  // La grabación arranca SIEMPRE de inmediato al presionar (sin delay,
-  // para no perder el audio del comienzo de la frase). La decisión
-  // toggle-vs-hold se toma recién al soltar, según cuánto duró la
-  // presión.
-  const handlePointerDown = () => {
-    if (isTranscribing) return;
+  // --- Manos libres: idéntico al botón que ya sabíamos que funcionaba ---
+  const handleToggleClick = () => {
+    if (isTranscribing || holdActive) return;
+    if (isRecording) stopRecording();
+    else startRecording();
+  };
 
-    if (isRecording && recordingModeRef.current === "toggle") {
-      // Ya grababa en modo manos libres -> este segundo tap lo detiene.
-      stopRecording();
-      return;
-    }
-
-    pressStartRef.current = Date.now();
+  // --- Push-to-talk: sin heurística de tiempo. Abajo = graba, arriba
+  // (por up, cancel, o el dedo se va) = para. Siempre. ---
+  const handleHoldStart = () => {
+    if (isTranscribing || isRecording) return;
+    setHoldActive(true);
     startRecording();
   };
 
-  const handlePointerUp = () => {
-    if (!isRecording) return;
-    const heldMs = Date.now() - pressStartRef.current;
-
-    if (heldMs < HOLD_THRESHOLD_MS) {
-      // Tap corto -> queda grabando en modo manos libres (toggle).
-      recordingModeRef.current = "toggle";
-    } else {
-      // Hold -> al soltar, para.
-      stopRecording();
-    }
+  const handleHoldEnd = () => {
+    setHoldActive((was) => {
+      if (was) stopRecording();
+      return false;
+    });
   };
 
   const handleUndoLastDictation = () => {
@@ -154,34 +143,47 @@ export default function DictationForm() {
           <p className="text-xs text-red-400 mt-1">{transcriptionError}</p>
         )}
 
-        <button
-          type="button"
-          onPointerDown={handlePointerDown}
-          onPointerUp={handlePointerUp}
-          onPointerLeave={handlePointerUp}
-          disabled={isTranscribing}
-          className={`w-full mt-2 flex items-center justify-center gap-2 text-sm font-medium py-4 rounded-lg select-none transition-colors ${
-            isRecording
-              ? "bg-red-500/20 text-red-400 animate-pulse"
-              : isTranscribing
-              ? "bg-zinc-800 text-zinc-600 cursor-not-allowed"
-              : "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 active:bg-blue-500/30"
-          }`}
-        >
-          {isTranscribing ? (
-            <>
-              <Loader2 className="w-5 h-5 animate-spin" /> Transcribiendo...
-            </>
-          ) : isRecording ? (
-            <>
-              <Square className="w-4 h-4 fill-current" /> Grabando... soltá para parar
-            </>
-          ) : (
-            <>
-              <Mic className="w-5 h-5" /> Mantené presionado para dictar, o tocá para manos libres
-            </>
-          )}
-        </button>
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={handleToggleClick}
+            disabled={isTranscribing || holdActive}
+            className={`flex items-center justify-center gap-2 text-sm font-medium py-4 rounded-lg transition-colors ${
+              isRecording && !holdActive
+                ? "bg-red-500/20 text-red-400 animate-pulse"
+                : isTranscribing
+                ? "bg-zinc-800 text-zinc-600 cursor-not-allowed"
+                : "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20"
+            }`}
+          >
+            {isRecording && !holdActive ? (
+              <Square className="w-4 h-4 fill-current" />
+            ) : (
+              <Mic className="w-5 h-5" />
+            )}
+            Manos libres
+          </button>
+
+          <button
+            type="button"
+            onPointerDown={handleHoldStart}
+            onPointerUp={handleHoldEnd}
+            onPointerCancel={handleHoldEnd}
+            onPointerLeave={handleHoldEnd}
+            disabled={isTranscribing || (isRecording && !holdActive)}
+            style={{ touchAction: "none" }}
+            className={`flex items-center justify-center gap-2 text-sm font-medium py-4 rounded-lg select-none transition-colors ${
+              holdActive
+                ? "bg-red-500/20 text-red-400 animate-pulse"
+                : isTranscribing
+                ? "bg-zinc-800 text-zinc-600 cursor-not-allowed"
+                : "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 active:bg-blue-500/30"
+            }`}
+          >
+            <Mic className="w-5 h-5" />
+            Mantener para hablar
+          </button>
+        </div>
       </div>
 
       <label className="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer select-none">
