@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useReportStore } from "@/stores/reportStore";
 import { Loader2, Mic, Square, RotateCcw, Sparkles, Undo2 } from "lucide-react";
 
@@ -33,6 +33,35 @@ export default function DictationForm() {
   const chunksRef = useRef<Blob[]>([]);
   const preDictationTextRef = useRef<string>("");
   const recordingStartRef = useRef<number>(0);
+
+  useEffect(() => {
+    // Pre-calienta el permiso de microfono apenas se abre la pantalla,
+    // en vez de recien pedirlo en el primer toque real de grabar --
+    // evita que el dialogo de permiso se cruce justo cuando el medico
+    // ya empezo a hablar (grabacion casi vacia = "Gracias por ver el
+    // video" de Whisper). Si el navegador bloquea esto sin gesto del
+    // usuario, falla en silencio y el permiso se pide igual, como
+    // hasta ahora, en el primer toque real -- este efecto solo puede
+    // mejorar la situacion, nunca empeorarla.
+    let cancelled = false;
+
+    navigator.mediaDevices
+      ?.getUserMedia({ audio: true })
+      .then((stream) => {
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        stream.getTracks().forEach((t) => t.stop());
+      })
+      .catch(() => {
+        // Silencioso a proposito.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const startRecording = async () => {
     try {
