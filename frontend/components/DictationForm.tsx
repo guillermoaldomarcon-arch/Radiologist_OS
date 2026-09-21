@@ -1,234 +1,369 @@
-"use client";
+"""
+line_based_report_engine.py
 
-import { useRef, useState } from "react";
-import { useReportStore } from "@/stores/reportStore";
-import { Loader2, Mic, Square, RotateCcw, Sparkles, Undo2 } from "lucide-react";
+NEW module (v2 design, per Guille's real-world usage pattern):
+builds a report by taking a template's fixed NORMAL lines and
+deciding, line by line, whether to:
+  - KEEP the normal line as-is (nothing dictated about it),
+  - REPLACE it with a specific pathological finding Guille dictated,
+  - OMIT it (only for lines marked omit_if_replaced_by_major_finding,
+    when a major/expansive finding in the same section makes the
+    generic normal line contradictory or irrelevant).
 
-const MIN_RECORDING_MS = 600;
+This is a different mental model from finding-based Report assembly
+(template_engine.build_report): instead of building a report FROM
+findings, this starts from the COMPLETE NORMAL TEMPLATE and modifies
+only what the dictation actually addresses -- matching how Guille
+actually works (a normal template he edits, not a blank page he
+fills in).
 
-export default function DictationForm() {
-  const {
-    templateId,
-    indication,
-    dictationText,
-    comparativeMode,
-    previousDictationText,
-    isLoading,
-    error,
-    currentReport,
-    isTranscribing,
-    transcriptionError,
-    setIndication,
-    setDictationText,
-    setComparativeMode,
-    setPreviousDictationText,
-    generateReport,
-    transcribeAudio,
-    reset,
-  } = useReportStore();
+The AI is used to do the matching AND the composition: given the
+full set of normal lines (each with its `concept`) and the dictated
+pathological findings, it decides which line_id each finding
+corresponds to, and composes the final sentence for each affected
+line, preserving whatever part of the normal text isn't contradicted
+by the dictated findings.
 
-  const [isRecording, setIsRecording] = useState(false);
-  const [holdActive, setHoldActive] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-  const preDictationTextRef = useRef<string>("");
-  const recordingStartRef = useRef<number>(0);
+Safety principles preserved:
+- The AI NEVER invents a finding not in the dictation; it only maps
+  EXISTING dictated findings (already extracted by parser_engine) to
+  template line_ids, and composes sentences strictly from those
+  findings plus the template's own normal text.
+- If the AI cannot confidently map a finding to any line_id, that
+  finding is NOT silently dropped -- it's appended in a clearly
+  marked section so the radiologist sees it and can place it
+  manually. This is a deliberate "fail visibly, not silently" choice.
+- Multiple findings mapped to the SAME line are never silently
+  overwritten -- they are all folded into one composed sentence.
+- Order of dictation does NOT determine order in the final report --
+  the final report always follows the template's fixed line order,
+  per Guille's explicit requirement that this must work regardless
+  of dictation order.
+- NEW: a mechanical (non-AI) safety check runs after composition --
+  if a line's normal text is bilateral ("ambos X normales") and a
+  finding mapped to it specifies laterality, the composed sentence
+  must not still contain a blanket bilateral claim. If it does, the
+  composition is not trusted; the finding is treated as unmatched
+  instead of risking a self-contradictory report (seen in
+  production: "ambos rinones normales" + masa unilateral en la misma
+  oracion).
+"""
 
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      chunksRef.current = [];
-      preDictationTextRef.current = dictationText;
-      recordingStartRef.current = Date.now();
+import json
+from typing import Callable, List
 
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunksRef.current.push(e.data);
-      };
+from finding import Finding
 
-      mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop());
 
-        const elapsedMs = Date.now() - recordingStartRef.current;
-        if (elapsedMs < MIN_RECORDING_MS) {
-          // Grabación demasiado corta para contener habla real (permiso
-          // recién otorgado, toque accidental, etc.) -- se descarta sin
-          // llamar al backend, para no alucinar texto tipo "Gracias por
-          // ver el video".
-          return;
+def _build_lines_reference(template: dict) -> List[dict]:
+    """
+    Flattens the template's sections/lines into a single list with
+    section context attached, for easier prompting and lookup.
+    """
+    flat_lines = []
+    for section in template.get("sections", []):
+        for line in section.get("lines", []):
+            flat_lines.append(
+                {
+                    "line_id": line["line_id"],
+                    "section_id": section["section_id"],
+                    "concept": line["concept"],
+                    "normal_text": line["normal_text"],
+                    "omit_if_replaced_by_major_finding": line.get(
+                        "omit_if_replaced_by_major_finding", False
+                    ),
+                }
+            )
+    return flat_lines
+
+
+def _group_finding_indices_by_line(matches: list) -> dict:
+    grouped: dict = {}
+    for match in matches:
+        line_id = match.get("line_id")
+        finding_index = match.get("finding_index")
+        if line_id is None or finding_index is None:
+            continue
+        grouped.setdefault(line_id, []).append(finding_index)
+    return grouped
+
+
+def _composed_line_contradicts_bilateral_normal(
+    normal_text: str, composed_line: str, findings_for_line: List[Finding]
+) -> bool:
+    """
+    Chequeo mecanico (no IA): si el texto normal de la linea es bilateral
+    ("ambos X normales") y algun hallazgo mapeado a esa linea tiene
+    lateralidad explicita, la oracion compuesta NO puede seguir
+    conteniendo una afirmacion bilateral generica -- eso es exactamente
+    la contradiccion vista en produccion ("ambos rinones normales" +
+    masa unilateral en el mismo parrafo). No decide contenido clinico,
+    solo decide si confiar en la composicion de la IA o fallar visible.
+    """
+    normal_lower = normal_text.lower()
+    composed_lower = composed_line.lower()
+
+    is_bilateral_normal_line = "ambos" in normal_lower or "bilateral" in normal_lower
+    has_lateralized_finding = any(f.side for f in findings_for_line)
+
+    return is_bilateral_normal_line and has_lateralized_finding and "ambos" in composed_lower
+
+
+def _match_findings_to_lines(
+    findings: List[Finding],
+    flat_lines: List[dict],
+    call_claude: Callable[[str], str],
+) -> dict:
+    """
+    Asks Claude to (1) map each pathological (ACTIVE) finding to the
+    line_id it corresponds to, and (2) compose the final sentence for
+    each affected line, combining the still-valid parts of the normal
+    text with the dictated finding(s).
+
+    Returns a dict:
+        {
+          "line_id": {"action": "replace", "composed_line": str},
+          ...
+          "_unmatched": [finding_index, ...]
         }
 
-        const audioBlob = new Blob(chunksRef.current, { type: "audio/webm" });
-        if (audioBlob.size > 0) await transcribeAudio(audioBlob);
-      };
+    Findings the AI cannot confidently map appear in "_unmatched" --
+    they are never silently dropped.
+    """
+    if not findings:
+        return {"_unmatched": []}
 
-      mediaRecorder.start();
-      setIsRecording(true);
-    } catch {
-      window.alert("No se pudo acceder al micrófono. Revisá los permisos del navegador.");
-    }
-  };
+    findings_text = "\n".join(
+        f"{i}: organ={f.organ!r}, location={f.location!r}, side={f.side!r}, "
+        f"size_mm={f.size_mm}, description={f.description!r}"
+        for i, f in enumerate(findings)
+    )
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current?.state === "inactive") return;
-    mediaRecorderRef.current?.stop();
-    setIsRecording(false);
-  };
+    lines_text = "\n".join(
+        f"- line_id={l['line_id']!r} | sección={l['section_id']} | "
+        f"concepto: {l['concept']} | texto normal: {l['normal_text']!r}"
+        for l in flat_lines
+    )
 
-  const handleToggleClick = () => {
-    if (isTranscribing || holdActive) return;
-    if (isRecording) stopRecording();
-    else startRecording();
-  };
+    prompt = f"""Tenés una plantilla de informe radiológico normal, compuesta por líneas fijas, y una lista de hallazgos patológicos ya extraídos de un dictado. Tu tarea tiene dos partes.
 
-  const handleHoldStart = () => {
-    if (isTranscribing || isRecording) return;
-    setHoldActive(true);
-    startRecording();
-  };
+PARTE 1 -- MATCHING: para cada hallazgo, decidí a qué línea de la plantilla corresponde clínicamente (qué línea normal ese hallazgo patológico afecta), usando tu conocimiento médico real. Puede haber MÁS DE UN hallazgo para la misma línea (ej: "paredes engrosadas" y "litiasis" pueden ser dos hallazgos distintos que afectan ambos a la línea de la vesícula) -- NUNCA descartes un hallazgo solo porque otro ya fue asignado a la misma línea.
 
-  const handleHoldEnd = () => {
-    setHoldActive((was) => {
-      if (was) stopRecording();
-      return false;
-    });
-  };
+PARTE 2 -- COMPOSICIÓN: para cada línea que recibió uno o más hallazgos, redactá la oración final que reemplaza el texto normal de esa línea, siguiendo estas reglas estrictas:
+- Conservá TEXTUALMENTE (o casi textualmente, ajustando solo la gramática para que la oración quede coherente) cualquier atributo del texto normal original que NINGÚN hallazgo contradiga (ej: si el texto normal dice "forma y tamaño normal" y ningún hallazgo dictado menciona forma ni tamaño, esa parte se mantiene).
+- Reemplazá o agregá ÚNICAMENTE los atributos que los hallazgos dictados mencionan explícitamente.
+- Si hay más de un hallazgo para la misma línea, integralos TODOS en una sola oración coherente.
+- NUNCA agregues ningún dato clínico, medida, lateralidad o hallazgo que no esté presente en los hallazgos dictados. No aumentes ni disminuyas certeza. Si tenés dudas sobre cómo integrar un atributo, priorizá conservar el texto normal antes que inventar redacción clínica no dictada.
+- Mantené el mismo registro y estilo que el texto normal original de esa línea.
 
-  const handleUndoLastDictation = () => {
-    setDictationText(preDictationTextRef.current);
-  };
+LÍNEAS DE LA PLANTILLA:
+{lines_text}
 
-  const canUndo = preDictationTextRef.current !== "" && dictationText !== preDictationTextRef.current;
+HALLAZGOS DICTADOS (ya extraídos, NO los modifiques ni inventes otros):
+{findings_text}
 
-  return (
-    <div className="border-t border-zinc-800 p-3 space-y-2 bg-zinc-900">
-      {(currentReport || dictationText.trim()) && (
-        <button
-          onClick={() => {
-            if (window.confirm("¿Limpiar el dictado actual y empezar un informe nuevo?")) {
-              reset();
+Respondé ÚNICAMENTE con un objeto JSON con esta forma exacta:
+
+{{
+  "matches": [
+    {{"finding_index": int, "line_id": string}}
+  ],
+  "composed_lines": [
+    {{"line_id": string, "composed_line": string}}
+  ],
+  "unmatched_finding_indices": [int]
+}}
+
+Donde:
+- "matches": para cada hallazgo que SÍ corresponde claramente a una línea, indicá su índice y el line_id que afecta. Un mismo line_id puede aparecer en más de un match.
+- "composed_lines": una entrada por cada line_id presente en "matches", con la oración final ya redactada según las reglas de la PARTE 2.
+- "unmatched_finding_indices": índices de hallazgos que NO podés mapear con confianza a ninguna línea -- NUNCA fuerces un mapeo dudoso, es preferible dejarlo sin mapear.
+
+No incluyas texto adicional, solo el JSON."""
+
+    raw_response = call_claude(prompt)
+
+    try:
+        cleaned = raw_response.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.strip("`")
+            cleaned = cleaned.replace("json", "", 1).strip()
+        data = json.loads(cleaned)
+    except (json.JSONDecodeError, AttributeError):
+        return {"_unmatched": list(range(len(findings)))}
+
+    matched_line_ids = set()
+    matched_indices = set()
+    for match in data.get("matches", []):
+        line_id = match.get("line_id")
+        finding_index = match.get("finding_index")
+        if line_id is not None and finding_index is not None:
+            matched_line_ids.add(line_id)
+            matched_indices.add(finding_index)
+
+    composed_by_line_id = {}
+    for entry in data.get("composed_lines", []):
+        line_id = entry.get("line_id")
+        composed_line = entry.get("composed_line")
+        if line_id is not None and composed_line:
+            composed_by_line_id[line_id] = composed_line
+
+    line_id_to_normal_text = {l["line_id"]: l["normal_text"] for l in flat_lines}
+    indices_by_line_id = _group_finding_indices_by_line(data.get("matches", []))
+
+    result = {}
+    contradicted_indices = set()
+
+    for line_id in matched_line_ids:
+        composed_line = composed_by_line_id.get(line_id)
+        indices_for_line = indices_by_line_id.get(line_id, [])
+        findings_for_line = [findings[i] for i in indices_for_line if 0 <= i < len(findings)]
+        normal_text = line_id_to_normal_text.get(line_id, "")
+
+        if composed_line and _composed_line_contradicts_bilateral_normal(
+            normal_text, composed_line, findings_for_line
+        ):
+            # No confiamos en esta composicion -- en vez de arriesgar un
+            # informe contradictorio, la tratamos como no ubicada: los
+            # hallazgos aparecen en "HALLAZGOS SIN UBICAR" para que el
+            # medico los integre a mano. Fail visibly, not silently.
+            contradicted_indices.update(indices_for_line)
+            continue
+
+        if composed_line:
+            result[line_id] = {"action": "replace", "composed_line": composed_line}
+        else:
+            # Fail visibly, not silently: si la IA matcheo la linea pero
+            # no genero composed_line (respuesta incompleta/malformada),
+            # no descartamos el hallazgo -- usamos la descripcion cruda
+            # como fallback, peor que una oracion compuesta pero mejor
+            # que perder el hallazgo sin dejar rastro.
+            fallback_text = "; ".join(
+                findings[i].description for i in indices_for_line
+                if 0 <= i < len(findings)
+            )
+            result[line_id] = {"action": "replace", "composed_line": fallback_text}
+
+    all_indices = set(range(len(findings)))
+    truly_unmatched = (all_indices - matched_indices) | contradicted_indices
+    result["_unmatched"] = sorted(truly_unmatched)
+
+    return result
+
+
+def build_line_based_report(
+    template: dict,
+    findings: List[Finding],
+    call_claude: Callable[[str], str],
+) -> dict:
+    """
+    Main entry point. Returns a dict describing the final report:
+
+        {
+          "sections": [
+            {
+              "section_title": str,
+              "lines": [str, ...]
             }
-          }}
-          className="w-full flex items-center justify-center gap-2 text-sm font-medium px-3 py-2 rounded-md bg-amber-600 text-white hover:bg-amber-500 transition-colors"
-        >
-          <RotateCcw className="w-4 h-4" />
-          Nuevo informe
-        </button>
-      )}
+          ],
+          "unmatched_findings": [Finding, ...]
+        }
 
-      <div>
-        <label className="text-[11px] text-zinc-500 uppercase tracking-wide">
-          Motivo de estudio
-        </label>
-        <input
-          type="text"
-          value={indication}
-          onChange={(e) => setIndication(e.target.value)}
-          className="w-full text-sm mt-1 px-2.5 py-1.5 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
-        />
-      </div>
+    `findings` should be the output of parser_engine.parse(). Only
+    ACTIVE findings are considered for line replacement; NO_FINDING
+    findings are ignored here because the template's normal_text
+    already covers that case by default.
 
-      <div>
-        <div className="flex items-center justify-between">
-          <label className="text-[11px] text-zinc-500 uppercase tracking-wide">Dictado</label>
-          {canUndo && (
-            <button
-              type="button"
-              onClick={handleUndoLastDictation}
-              className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200"
-            >
-              <Undo2 className="w-3 h-3" />
-              Deshacer último dictado
-            </button>
-          )}
-        </div>
+    Omission rule (corrected per Guille's explicit clarification):
+    a generic "normal density/signal" line marked
+    omit_if_replaced_by_major_finding=true is omitted whenever ANY
+    ACTIVE finding is mapped to ANY line within the SAME SECTION --
+    regardless of the finding's size or apparent severity. This is a
+    deterministic, mechanical rule (no AI judgment call about
+    "is this big enough to matter") to avoid the AI having to decide
+    severity, which is exactly the kind of clinical judgment that
+    should not be delegated to a size/severity heuristic.
+    """
+    flat_lines = _build_lines_reference(template)
+    pathological_findings = [f for f in findings if f.status == "ACTIVE"]
 
-        <textarea
-          value={dictationText}
-          onChange={(e) => setDictationText(e.target.value)}
-          rows={6}
-          className="w-full text-sm mt-1 px-2.5 py-1.5 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-100 resize-y focus:outline-none focus:ring-1 focus:ring-blue-500"
-        />
-        {transcriptionError && (
-          <p className="text-xs text-red-400 mt-1">{transcriptionError}</p>
-        )}
+    mapping = _match_findings_to_lines(pathological_findings, flat_lines, call_claude)
+    unmatched_indices = mapping.get("_unmatched", [])
 
-        <button
-          type="button"
-          onClick={handleToggleClick}
-          disabled={isTranscribing || holdActive}
-          className={`w-full mt-2 flex items-center justify-center gap-2 text-sm font-medium py-4 rounded-lg transition-colors ${
-            isRecording && !holdActive
-              ? "bg-red-500/20 text-red-400 animate-pulse"
-              : isTranscribing
-              ? "bg-zinc-800 text-zinc-600 cursor-not-allowed"
-              : "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20"
-          }`}
-        >
-          {isRecording && !holdActive ? (
-            <Square className="w-4 h-4 fill-current" />
-          ) : (
-            <Mic className="w-5 h-5" />
-          )}
-          Manos libres — un toque para grabar, otro para terminar
-        </button>
+    # Determine which sections received at least one matched finding,
+    # so we can apply the mechanical omission rule per section.
+    line_id_to_section = {l["line_id"]: l["section_id"] for l in flat_lines}
+    sections_with_findings = set()
+    for line_id, action_entry in mapping.items():
+        if line_id == "_unmatched":
+            continue
+        if action_entry.get("action") == "replace":
+            section_id = line_id_to_section.get(line_id)
+            if section_id:
+                sections_with_findings.add(section_id)
 
-        <button
-          type="button"
-          onPointerDown={handleHoldStart}
-          onPointerUp={handleHoldEnd}
-          onPointerCancel={handleHoldEnd}
-          onPointerLeave={handleHoldEnd}
-          disabled={isTranscribing || (isRecording && !holdActive)}
-          style={{ touchAction: "none" }}
-          className={`w-full mt-2 flex items-center justify-center gap-2 text-sm font-medium py-4 rounded-lg select-none transition-colors ${
-            holdActive
-              ? "bg-red-500/20 text-red-400 animate-pulse"
-              : isTranscribing
-              ? "bg-zinc-800 text-zinc-600 cursor-not-allowed"
-              : "bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 active:bg-blue-500/30"
-          }`}
-        >
-          <Mic className="w-5 h-5" />
-          Mantener para hablar — soltá para cortar
-        </button>
-      </div>
+    result_sections = []
 
-      <label className="flex items-center gap-2 text-xs text-zinc-400 cursor-pointer select-none">
-        <input
-          type="checkbox"
-          checked={comparativeMode}
-          onChange={(e) => setComparativeMode(e.target.checked)}
-          className="rounded border-zinc-600 bg-zinc-800"
-        />
-        Es un estudio comparativo
-      </label>
+    for section in template.get("sections", []):
+        section_id = section["section_id"]
+        section_has_finding = section_id in sections_with_findings
+        section_lines = []
 
-      {comparativeMode && (
-        <div>
-          <label className="text-[11px] text-zinc-500 uppercase tracking-wide">
-            Informe previo
-          </label>
-          <textarea
-            value={previousDictationText}
-            onChange={(e) => setPreviousDictationText(e.target.value)}
-            rows={3}
-            className="w-full text-sm mt-1 px-2.5 py-1.5 rounded-md bg-zinc-800 border border-zinc-700 text-zinc-100 resize-y focus:outline-none focus:ring-1 focus:ring-blue-500"
-          />
-        </div>
-      )}
+        for line in section.get("lines", []):
+            line_id = line["line_id"]
+            action_entry = mapping.get(line_id)
 
-      {error && <p className="text-xs text-red-400">{error}</p>}
+            if action_entry is not None and action_entry.get("action") == "replace":
+                section_lines.append(action_entry["composed_line"])
+                continue
 
-      <button
-        onClick={generateReport}
-        disabled={isLoading || !templateId || !dictationText.trim()}
-        className="w-full flex items-center justify-center gap-2 text-sm px-3 py-2 rounded-md bg-blue-600 text-white hover:bg-blue-500 disabled:bg-zinc-800 disabled:text-zinc-500 disabled:cursor-not-allowed transition-colors"
-      >
-        {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-        Generar informe
-      </button>
-    </div>
-  );
-}
+            omit_if_major = line.get("omit_if_replaced_by_major_finding", False)
+            if omit_if_major and section_has_finding:
+                # Mechanical rule: ANY finding in this section
+                # invalidates this generic normal-density line,
+                # regardless of size/severity.
+                continue
+
+            if action_entry is not None and action_entry.get("action") == "omit":
+                continue
+
+            section_lines.append(line["normal_text"])
+
+        result_sections.append(
+            {"section_title": section["section_title"], "lines": section_lines}
+        )
+
+    unmatched_findings = [pathological_findings[i] for i in unmatched_indices]
+
+    return {
+        "sections": result_sections,
+        "unmatched_findings": unmatched_findings,
+    }
+
+
+def render_report_text(template: dict, report_dict: dict) -> str:
+    """
+    Renders the structured report dict into plain text, matching
+    Guille's real format (technique paragraph, then each section with
+    its title and bullet lines).
+    """
+    lines_out = []
+    lines_out.append(template.get("display_name", "").upper())
+    lines_out.append("")
+    lines_out.append(template.get("default_technique_text", ""))
+    lines_out.append("")
+
+    for section in report_dict["sections"]:
+        lines_out.append(section["section_title"])
+        lines_out.append("")
+        for line in section["lines"]:
+            lines_out.append(f"\u00b7        {line}")
+        lines_out.append("")
+
+    if report_dict["unmatched_findings"]:
+        lines_out.append("--- HALLAZGOS SIN UBICAR (requieren revisión manual) ---")
+        for f in report_dict["unmatched_findings"]:
+            lines_out.append(f"\u00b7        {f.description}")
+        lines_out.append("")
+
+    return "\n".join(lines_out)
