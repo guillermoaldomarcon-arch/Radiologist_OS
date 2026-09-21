@@ -38,6 +38,25 @@ _MODEL = "whisper-large-v3"
 _LANGUAGE = "es"
 _TIMEOUT = 60.0
 
+# Vocabulario de dominio para sesgar el reconocimiento de Whisper hacia
+# terminologia radiologica/anatomica en espanol -- reduce (no elimina)
+# confusiones por parecido sonoro con palabras de uso comun (ej: "bazo"
+# transcripto como "vaso", visto en produccion). Whisper usa este texto
+# como contexto de estilo/vocabulario, no como instruccion literal.
+# Ir sumando terminos aca a medida que aparezcan nuevos errores reales
+# en el uso diario -- no intentar anticiparlos todos de una.
+_MEDICAL_VOCABULARY_PROMPT = (
+    "Dictado radiologico en espanol. Organos y estructuras frecuentes: "
+    "higado, bazo, rinon, rinones, vesicula biliar, pancreas, aorta "
+    "abdominal, vena cava inferior, prostata, utero, ovario, ovarios, "
+    "testiculo, tiroides, mama, pulmon, pleura, apendice, colon, recto, "
+    "vejiga, ureter, glandula suprarrenal, ganglio, ganglios. "
+    "Terminos descriptivos frecuentes: ecogenicidad, ecoestructura, "
+    "hipodenso, hiperecoico, hipoecoico, isquemico, parenquima, "
+    "corticomedular, litiasis, quiste, nodulo, masa expansiva, "
+    "adenopatia, dilatacion."
+)
+
 
 class GroqClientError(Exception):
     """
@@ -69,7 +88,11 @@ def transcribe_audio(audio_bytes: bytes, filename: str = "audio.webm") -> str:
         response = httpx.post(
             _GROQ_URL,
             headers={"Authorization": f"Bearer {api_key}"},
-            data={"model": _MODEL, "language": _LANGUAGE},
+            data={
+                "model": _MODEL,
+                "language": _LANGUAGE,
+                "prompt": _MEDICAL_VOCABULARY_PROMPT,
+            },
             files={"file": (filename, audio_bytes)},
             timeout=_TIMEOUT,
         )
