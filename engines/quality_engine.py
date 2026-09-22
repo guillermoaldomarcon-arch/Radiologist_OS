@@ -110,6 +110,22 @@ class QualityIssue:
             f"descripción menciona '{', '.join(sorted(contradicting_canonical))}'."
         )
     return None
+
+    description_lower = finding.description.lower()
+    side_lower = finding.side.lower()
+    side_canonical = _LATERALITY_CANONICAL.get(side_lower, side_lower)
+
+    mentioned_terms = [t for t in _LATERALITY_TERMS if t in description_lower]
+    mentioned_canonical = {_LATERALITY_CANONICAL.get(t, t) for t in mentioned_terms}
+
+    contradicting_canonical = mentioned_canonical - {side_canonical}
+
+    if contradicting_canonical:
+        return (
+            f"Lateralidad contradictoria: side='{finding.side}' pero la "
+            f"descripción menciona '{', '.join(sorted(contradicting_canonical))}'."
+        )
+    return None
     description_lower = finding.description.lower()
     side_lower = finding.side.lower()
 
