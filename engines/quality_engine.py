@@ -82,7 +82,7 @@ class QualityIssue:
 # Layer 1 — Structural validation
 # ---------------------------------------------------------------------------
 
-    def _check_laterality_contradiction(finding: Finding) -> Optional[str]:
+def _check_laterality_contradiction(finding: Finding) -> Optional[str]:
     """
     Flags a finding if its `side` field disagrees with a different
     laterality term mentioned in its own description.
@@ -109,42 +109,7 @@ class QualityIssue:
             f"Lateralidad contradictoria: side='{finding.side}' pero la "
             f"descripción menciona '{', '.join(sorted(contradicting_canonical))}'."
         )
-    return None
-
-    description_lower = finding.description.lower()
-    side_lower = finding.side.lower()
-    side_canonical = _LATERALITY_CANONICAL.get(side_lower, side_lower)
-
-    mentioned_terms = [t for t in _LATERALITY_TERMS if t in description_lower]
-    mentioned_canonical = {_LATERALITY_CANONICAL.get(t, t) for t in mentioned_terms}
-
-    contradicting_canonical = mentioned_canonical - {side_canonical}
-
-    if contradicting_canonical:
-        return (
-            f"Lateralidad contradictoria: side='{finding.side}' pero la "
-            f"descripción menciona '{', '.join(sorted(contradicting_canonical))}'."
-        )
-    return None
-    description_lower = finding.description.lower()
-    side_lower = finding.side.lower()
-
-    mentioned_terms = [t for t in _LATERALITY_TERMS if t in description_lower]
-
-    # "bilateral" mentioned alongside a one-sided `side` value is a
-    # contradiction worth flagging — it's ambiguous which is correct.
-    contradicting_terms = [
-        t for t in mentioned_terms
-        if t != side_lower and not (t == "bilateral" and side_lower == "bilateral")
-    ]
-
-    if contradicting_terms:
-        return (
-            f"Lateralidad contradictoria: side='{finding.side}' pero la "
-            f"descripción menciona '{', '.join(contradicting_terms)}'."
-        )
-    return None
-
+    return None   
 
 def _check_organ_not_in_template(
     finding: Finding, expected_organs_or_regions: List[str]
