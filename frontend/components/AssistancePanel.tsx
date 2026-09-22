@@ -102,6 +102,7 @@ export default function AssistancePanel() {
   const {
     currentReport,
     appendDevilAdvocateAnswer,
+    selectImpressionLevel,
     insertPhrasingSuggestion,
   } = useReportStore();
 
@@ -131,8 +132,12 @@ export default function AssistancePanel() {
         count={devil_questions.length}
       >
         {devil_questions.map((q, idx) => (
-          <DevilQuestionCard key={idx} question={q} onAnswer={appendDevilAdvocateAnswer} />
-        ))}
+          <DevilQuestionCard
+            key={idx}
+            question={q}
+            onAnswer={q.rule_type === "F" ? selectImpressionLevel : appendDevilAdvocateAnswer}
+          />
+        ))}  
       </Section>
 
       <Section
