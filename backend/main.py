@@ -252,7 +252,10 @@ def create_report(req: ReportRequest):
         devil_questions_raw = []
 
     quality_engine.apply_flags(quality_issues)
-    releasable = not any(f.status == "FLAGGED" for f in findings)
+        releasable = (
+        not any(f.status == "FLAGGED" for f in findings)
+        and not report_dict["unmatched_findings"]
+    )
 
     followup_results_out: list[FollowupResultOut] = []
     if req.previous_dictation_text and req.previous_dictation_text.strip():
