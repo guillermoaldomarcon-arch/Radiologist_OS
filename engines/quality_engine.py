@@ -54,6 +54,14 @@ def _strip_accents(text: str) -> str:
     return text.translate(_ACCENT_MAP)
 
 
+_LATERALITY_CANONICAL = {
+    "derecho": "derecho",
+    "derecha": "derecho",
+    "izquierdo": "izquierdo",
+    "izquierda": "izquierdo",
+    "bilateral": "bilateral",
+}
+
 class QualityIssue:
     """
     A single detected issue for a specific Finding. Informational
@@ -74,17 +82,34 @@ class QualityIssue:
 # Layer 1 — Structural validation
 # ---------------------------------------------------------------------------
 
-def _check_laterality_contradiction(finding: Finding) -> Optional[str]:
+    def _check_laterality_contradiction(finding: Finding) -> Optional[str]:
     """
     Flags a finding if its `side` field disagrees with a different
     laterality term mentioned in its own description.
 
-    Example of a contradiction: side="derecho" but description
-    contains "izquierdo".
+    Terms are compared by canonical side (derecho/izquierdo/bilateral),
+    not literal string -- "derecha" y "derecho" son el mismo lado
+    (concordancia de género, no lateralidad distinta) y no deben
+    generar falso positivo.
     """
     if not finding.side or not finding.description:
         return None
 
+    description_lower = finding.description.lower()
+    side_lower = finding.side.lower()
+    side_canonical = _LATERALITY_CANONICAL.get(side_lower, side_lower)
+
+    mentioned_terms = [t for t in _LATERALITY_TERMS if t in description_lower]
+    mentioned_canonical = {_LATERALITY_CANONICAL.get(t, t) for t in mentioned_terms}
+
+    contradicting_canonical = mentioned_canonical - {side_canonical}
+
+    if contradicting_canonical:
+        return (
+            f"Lateralidad contradictoria: side='{finding.side}' pero la "
+            f"descripción menciona '{', '.join(sorted(contradicting_canonical))}'."
+        )
+    return None
     description_lower = finding.description.lower()
     side_lower = finding.side.lower()
 
