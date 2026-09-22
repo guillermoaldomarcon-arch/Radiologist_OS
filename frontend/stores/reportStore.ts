@@ -147,6 +147,7 @@ interface ReportState {
    * backend devuelva offsets junto con cada finding.
    */
   insertPhrasingSuggestion: (text: string) => void;
+  selectImpressionLevel: (text: string) => void;
 
   /**
    * Respuesta del médico a una pregunta del abogado del diablo
@@ -215,6 +216,11 @@ export const useReportStore = create<ReportState>((set, get) => ({
     const current = get().reportDraftText;
     const separator = current.trim().length > 0 ? "\n" : "";
     set({ reportDraftText: `${current}${separator}${text}` });
+  },
+    selectImpressionLevel: (text: string) => {
+    const current = get().reportDraftText;
+    const separator = current.trim().length > 0 ? "\n\n" : "";
+    set({ reportDraftText: `${current}${separator}IMPRESIÓN DIAGNÓSTICA:\n${text}` });
   },
 
   generateReport: async () => {
