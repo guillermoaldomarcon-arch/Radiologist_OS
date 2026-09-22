@@ -305,7 +305,13 @@ def classify_with_answers(organ: str, description: str, answers: dict) -> Option
 
 
 def _tier1_resumen(active: List[Finding]) -> str:
-    return " ".join((f.description or f.name).strip().rstrip(".") + "." for f in active)
+    sentences = []
+    for f in active:
+        text = (f.description or f.name).strip().rstrip(".")
+        if text:
+            text = text[0].upper() + text[1:]
+        sentences.append(text + ".")
+    return " ".join(sentences)
 
 
 def _tier3_candidate(active: List[Finding]) -> Optional[str]:
