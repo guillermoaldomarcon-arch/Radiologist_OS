@@ -56,6 +56,7 @@ class ReportRequest(BaseModel):
 
 class DevilQuestionOut(BaseModel):
     finding_name: str | None
+    finding_description: str | None
     question: str
     reason: str
     rule_type: str
@@ -121,6 +122,7 @@ class ReportResponse(BaseModel):
 def _devil_question_to_out(q) -> DevilQuestionOut:
     return DevilQuestionOut(
         finding_name=q.finding.name if q.finding else None,
+        finding_description=q.finding.description if q.finding else None,
         question=q.question, reason=q.reason, rule_type=q.rule_type,
         severity=q.severity, missing_fields=q.missing_fields,
         closure_candidates=q.closure_candidates,
