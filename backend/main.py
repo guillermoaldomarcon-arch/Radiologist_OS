@@ -230,10 +230,6 @@ def create_report(req: ReportRequest):
     report_text = render_report_text(template, report_dict)
     modality = template.get("modality", "")
 
-    # Quality Engine corre DESPUES de armar el texto del informe (nunca
-    # antes: build_line_based_report() solo toma findings ACTIVE, asi
-    # que flaguear antes haría desaparecer el hallazgo del informe sin
-    # dejar rastro). review() es puro -- no muta status todavía.
     try:
         quality_issues = quality_engine.review(
             findings, expected_organs_or_regions=template["expected_organs_or_regions"],
@@ -242,20 +238,16 @@ def create_report(req: ReportRequest):
     except Exception:
         quality_issues = []
 
-    # devil_advocate corre con los findings TODAVIA en status=ACTIVE:
-    # su Regla F necesita verlos así para poder avisar "hay hallazgos
-    # marcados, resolvelos antes de cerrar la impresión". Recién
-    # DESPUES de esta llamada se aplican los flags reales (Layer 3).
     try:
         devil_questions_raw = devil_advocate_engine.review(findings, modality=modality, quality_issues=quality_issues)
     except Exception:
         devil_questions_raw = []
 
-        quality_engine.apply_flags(quality_issues)
-            releasable = (
-            not any(f.status == "FLAGGED" for f in findings)
-            and not report_dict["unmatched_findings"]
-        )
+    quality_engine.apply_flags(quality_issues)
+    releasable = (
+        not any(f.status == "FLAGGED" for f in findings)
+        and not report_dict["unmatched_findings"]
+    )
 
     followup_results_out: list[FollowupResultOut] = []
     if req.previous_dictation_text and req.previous_dictation_text.strip():
