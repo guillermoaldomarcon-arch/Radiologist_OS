@@ -16,9 +16,17 @@ function DevilQuestionCard({
     ([, value]) => value !== null && value !== undefined && String(value).trim() !== ""
   );
 
+  // Ancla usada para construir la respuesta: preferimos la descripción
+  // completa del hallazgo (más específica, menos ambigua para el parser
+  // al reparsear) y caemos a finding_name solo si no hay descripción.
+  const anchor = question.finding_description || question.finding_name;
+
   const answerWithContext = (value: string) => {
-    const context = question.finding_name ? `${question.finding_name}: ` : "";
-    onAnswer(`${context}${value}`);
+    if (anchor) {
+      onAnswer(`[MEDIDA_CONFIRMADA: ${anchor} = ${value} mm]`);
+    } else {
+      onAnswer(value);
+    }
   };
 
   const missingFieldNames = Object.keys(question.missing_fields ?? {});
@@ -175,6 +183,7 @@ export default function AssistancePanel() {
               <DevilQuestionCard
                 question={{
                   finding_name: diff.finding_name,
+                  finding_description: null,
                   question: diff.next_question,
                   reason: "Necesario para acotar el diferencial.",
                   rule_type: "DIFF",
