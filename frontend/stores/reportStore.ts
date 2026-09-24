@@ -24,6 +24,7 @@ export interface ReportRequest {
 
 export interface DevilQuestion {
   finding_name: string | null;
+  finding_description: string | null;
   question: string;
   reason: string;
   rule_type: string; // "B" | "C" | "E" | "F" (y "G" cuando se agregue)
@@ -147,6 +148,15 @@ interface ReportState {
    * backend devuelva offsets junto con cada finding.
    */
   insertPhrasingSuggestion: (text: string) => void;
+
+  /**
+   * Respuesta del médico a la pregunta de Regla F (nivel de síntesis
+   * de la impresión diagnóstica). A diferencia de appendDevilAdvocateAnswer,
+   * esto NO toca el dictado ni dispara un nuevo POST /report -- se
+   * inserta directamente en el informe (Panel 2), porque no es una
+   * corrección de un hallazgo dictado, es una elección editorial sobre
+   * cómo presentar la conclusión.
+   */
   selectImpressionLevel: (text: string) => void;
 
   /**
@@ -217,7 +227,8 @@ export const useReportStore = create<ReportState>((set, get) => ({
     const separator = current.trim().length > 0 ? "\n" : "";
     set({ reportDraftText: `${current}${separator}${text}` });
   },
-    selectImpressionLevel: (text: string) => {
+
+  selectImpressionLevel: (text: string) => {
     const current = get().reportDraftText;
     const separator = current.trim().length > 0 ? "\n\n" : "";
     set({ reportDraftText: `${current}${separator}IMPRESIÓN DIAGNÓSTICA:\n${text}` });
@@ -321,10 +332,6 @@ export const useReportStore = create<ReportState>((set, get) => ({
 
   reset: () =>
     set({
-      // Mantiene el template seleccionado -- en una guardia es común dictar
-      // varios estudios seguidos de la misma modalidad. Si preferís que
-      // "Nuevo informe" también deseleccione el template, sacá esta línea
-      // y dejá que se aplique initialRequestState completo.
       templateId: get().templateId,
       dictationText: "",
       indication: "",
