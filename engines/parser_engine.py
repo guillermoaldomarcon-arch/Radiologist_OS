@@ -47,6 +47,23 @@ literal fallback only for offline/no-API testing -- see
 _extract_with_rules_only, used only when call_claude is None). This
 is a known, accepted limitation: without AI, the system only catches
 clinical content matching the legacy fixed vocabulary.
+
+== MEDIDA_CONFIRMADA marker (added) ==
+
+When the radiologist answers a devil-advocate question about a
+missing measurement, the frontend appends a structured line to the
+dictation instead of a bare number:
+
+    [MEDIDA_CONFIRMADA: <finding description> = <value> mm]
+
+This exists to remove ambiguity when the dictation already contains
+more than one finding without a measurement -- a bare number appended
+at the end of free text left the AI to guess which finding it
+belonged to (seen in production: a measurement meant for one finding
+silently attached itself to a different one). The prompt below
+treats this marker as a literal instruction, not prose to interpret:
+it must be applied ONLY to the finding it names, never inferred by
+proximity or order.
 """
 
 import json
@@ -152,6 +169,7 @@ Reglas estrictas:
 - "description" debe ser un fragmento literal o casi literal del texto original -- NUNCA inventes ni agregues información que no esté en el dictado.
 - Si el dictado no menciona una medida explícita en mm/cm, "size_mm" debe ser null -- NUNCA estimes ni inventes un valor.
 - Si no hay un hallazgo claro, no incluyas esa frase.
+- Regla especial para marcadores [MEDIDA_CONFIRMADA: <descripción> = <valor> mm]: si el dictado contiene una línea con ese formato exacto, es una instrucción literal del radiólogo, NO un hallazgo nuevo. Buscá, entre los hallazgos que ya identificaste en el resto del dictado, aquel cuya descripción coincida (razonablemente, no necesariamente palabra por palabra) con el texto entre "MEDIDA_CONFIRMADA:" y "=", y asignale ese "size_mm" a ESE hallazgo específico. NUNCA se lo asignes a otro hallazgo distinto, aunque esté más cerca en el texto. Si no encontrás ningún hallazgo cuya descripción coincida razonablemente, ignorá el marcador (no inventes un hallazgo nuevo solo por el marcador). El marcador en sí NUNCA debe aparecer como un hallazgo propio en tu respuesta.
 - Respondé ÚNICAMENTE con un array JSON, sin texto adicional, sin markdown.
 
 Dictado:
