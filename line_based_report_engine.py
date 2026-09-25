@@ -181,21 +181,51 @@ Donde:
 
 No incluyas texto adicional, solo el JSON."""
 
-    raw_response = call_claude(prompt)
+    # Reintento con reprompt correctivo si Claude devuelve JSON malformado.
+    # Se observo en produccion (logs 2026-09-25) que la respuesta puede
+    # perder llaves/comillas en elementos intermedios de "matches", lo que
+    # rompia json.loads y descartaba TODOS los hallazgos como no mapeados,
+    # incluso cuando el matching en si era correcto. No es un problema de
+    # parser_engine (los size_mm llegan bien) -- es fragilidad de esta
+    # llamada puntual. Maximo 2 intentos: no vale la pena reintentar
+    # indefinidamente un problema de formato que probablemente persista.
+    max_attempts = 2
+    data = None
 
-    print("=== DEBUG_MATCH: hallazgos enviados a Claude para matching/composicion ===")
-    print(findings_text)
-    print("=== DEBUG_MATCH: respuesta cruda de Claude ===")
-    print(raw_response)
-    print("=== FIN DEBUG_MATCH ===")
+    for attempt in range(1, max_attempts + 1):
+        current_prompt = prompt
+        if attempt > 1:
+            current_prompt = (
+                prompt
+                + "\n\nIMPORTANTE: tu respuesta anterior no era JSON valido. "
+                "Respondio de nuevo, UNICAMENTE con JSON valido y bien formado: "
+                "cada elemento de \"matches\" debe ser un objeto con comillas "
+                "dobles en todas las claves y en todos los valores string, "
+                "por ejemplo {\"finding_index\": 1, \"line_id\": \"bazo\"}. "
+                "No omitas llaves, comillas ni comas en ningun elemento del array."
+            )
 
-    try:
-        cleaned = raw_response.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.strip("`")
-            cleaned = cleaned.replace("json", "", 1).strip()
-        data = json.loads(cleaned)
-    except (json.JSONDecodeError, AttributeError):
+        raw_response = call_claude(current_prompt)
+
+        print(f"=== DEBUG_MATCH intento {attempt}: hallazgos enviados a Claude ===")
+        print(findings_text)
+        print(f"=== DEBUG_MATCH intento {attempt}: respuesta cruda de Claude ===")
+        print(raw_response)
+        print("=== FIN DEBUG_MATCH ===")
+
+        try:
+            cleaned = raw_response.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.strip("`")
+                cleaned = cleaned.replace("json", "", 1).strip()
+            data = json.loads(cleaned)
+            break
+        except (json.JSONDecodeError, AttributeError):
+            print(f"=== DEBUG_MATCH intento {attempt}: JSON invalido, {'reintentando' if attempt < max_attempts else 'sin mas intentos'} ===")
+            data = None
+            continue
+
+    if data is None:
         return {"_unmatched": list(range(len(findings)))}
 
     matched_line_ids = set()
