@@ -39,20 +39,31 @@ Safety principles preserved:
   the final report always follows the template's fixed line order,
   per Guille's explicit requirement that this must work regardless
   of dictation order.
-- NEW: a mechanical (non-AI) safety check runs after composition --
-  if a line's normal text is bilateral ("ambos X normales") and a
-  finding mapped to it specifies laterality, the composed sentence
-  must not still contain a blanket bilateral claim. If it does, the
+- A mechanical (non-AI) safety check runs after composition -- if a
+  line's normal text is bilateral ("ambos X normales") and a finding
+  mapped to it specifies laterality, the composed sentence must not
+  still contain a blanket bilateral claim. If it does, the
   composition is not trusted; the finding is treated as unmatched
   instead of risking a self-contradictory report (seen in
   production: "ambos rinones normales" + masa unilateral en la misma
   oracion).
+- NEW: a second mechanical safety check runs after composition -- if
+  a finding mapped to a line has a confirmed size_mm, the composed
+  sentence must literally contain that number. If Claude drops a
+  confirmed measurement while composing (seen in production: Regla B
+  del abogado del diablo confirma una medida, pero la oracion final
+  no la menciona), the composition is not trusted; the finding is
+  treated as unmatched instead of silently losing clinical data the
+  radiologist explicitly confirmed.
 """
 
 import json
+import re
 from typing import Callable, List
 
 from finding import Finding
+
+_MM_IN_TEXT_PATTERN = re.compile(r"(\d+(?:[.,]\d+)?)\s*mm\b", re.IGNORECASE)
 
 
 def _build_lines_reference(template: dict) -> List[dict]:
@@ -109,6 +120,39 @@ def _composed_line_contradicts_bilateral_normal(
     return is_bilateral_normal_line and has_lateralized_finding and "ambos" in composed_lower
 
 
+def _composed_line_missing_confirmed_measurement(
+    composed_line: str, findings_for_line: List[Finding]
+) -> bool:
+    """
+    Chequeo mecanico (no IA): si algun hallazgo mapeado a esta linea
+    tiene una medida confirmada (size_mm), la oracion compuesta DEBE
+    mencionar ese numero explicitamente (formato "X mm"). Visto en
+    produccion: Claude recibe size_mm=17 en el prompt de composicion
+    pero redacta la oracion sin incluirlo -- una medida que el medico
+    confirmo explicitamente via Regla B no puede desaparecer en
+    silencio. Si esto dispara, la linea se trata como no mapeada para
+    que el medico la vea y la complete a mano, en vez de publicar un
+    informe con una medida confirmada pero ausente.
+    """
+    sizes_in_text = set()
+    for raw in _MM_IN_TEXT_PATTERN.findall(composed_line):
+        try:
+            sizes_in_text.add(round(float(raw.replace(",", ".")), 1))
+        except ValueError:
+            continue
+
+    for f in findings_for_line:
+        if f.size_mm is None:
+            continue
+        try:
+            expected = round(float(f.size_mm), 1)
+        except (TypeError, ValueError):
+            continue
+        if expected not in sizes_in_text:
+            return True
+    return False
+
+
 def _match_findings_to_lines(
     findings: List[Finding],
     flat_lines: List[dict],
@@ -152,7 +196,8 @@ PARTE 1 -- MATCHING: para cada hallazgo, decidí a qué línea de la plantilla c
 PARTE 2 -- COMPOSICIÓN: para cada línea que recibió uno o más hallazgos, redactá la oración final que reemplaza el texto normal de esa línea, siguiendo estas reglas estrictas:
 - Conservá TEXTUALMENTE (o casi textualmente, ajustando solo la gramática para que la oración quede coherente) cualquier atributo del texto normal original que NINGÚN hallazgo contradiga (ej: si el texto normal dice "forma y tamaño normal" y ningún hallazgo dictado menciona forma ni tamaño, esa parte se mantiene).
 - Reemplazá o agregá ÚNICAMENTE los atributos que los hallazgos dictados mencionan explícitamente.
-- Si hay más de un hallazgo para la misma línea, integralos TODOS en una sola oración coherente.
+- REGLA OBLIGATORIA E INNEGOCIABLE: si un hallazgo tiene un valor de size_mm distinto de null, la oración compuesta DEBE incluir ese número explícitamente, en formato "X mm" (ej: size_mm=17 -> la oración debe contener literalmente "17 mm" en algún punto). Esto es obligatorio incluso si te parece redundante o si ya mencionaste el tamaño de otra forma -- el número en milímetros tiene que estar presente sí o sí.
+- Si hay más de un hallazgo para la misma línea, integralos TODOS en una sola oración coherente, y aplicá la regla de arriba para CADA size_mm presente.
 - NUNCA agregues ningún dato clínico, medida, lateralidad o hallazgo que no esté presente en los hallazgos dictados. No aumentes ni disminuyas certeza. Si tenés dudas sobre cómo integrar un atributo, priorizá conservar el texto normal antes que inventar redacción clínica no dictada.
 - Mantené el mismo registro y estilo que el texto normal original de esa línea.
 
@@ -182,13 +227,11 @@ Donde:
 No incluyas texto adicional, solo el JSON."""
 
     # Reintento con reprompt correctivo si Claude devuelve JSON malformado.
-    # Se observo en produccion (logs 2026-09-25) que la respuesta puede
-    # perder llaves/comillas en elementos intermedios de "matches", lo que
-    # rompia json.loads y descartaba TODOS los hallazgos como no mapeados,
-    # incluso cuando el matching en si era correcto. No es un problema de
-    # parser_engine (los size_mm llegan bien) -- es fragilidad de esta
-    # llamada puntual. Maximo 2 intentos: no vale la pena reintentar
-    # indefinidamente un problema de formato que probablemente persista.
+    # Se dejo este mecanismo como red de seguridad general (formato
+    # de respuesta), aunque la causa raiz confirmada en produccion
+    # (2026-09-25) para la perdida de medidas confirmadas NO era esta
+    # -- el JSON parseaba bien y el problema era que la oracion
+    # compuesta omitia el numero. Ver _composed_line_missing_confirmed_measurement.
     max_attempts = 2
     data = None
 
@@ -259,6 +302,14 @@ No incluyas texto adicional, solo el JSON."""
         if composed_line and _composed_line_contradicts_bilateral_normal(
             normal_text, composed_line, findings_for_line
         ):
+            print(f"=== DEBUG_MATCH: linea '{line_id}' descartada por contradiccion bilateral ===")
+            contradicted_indices.update(indices_for_line)
+            continue
+
+        if composed_line and _composed_line_missing_confirmed_measurement(
+            composed_line, findings_for_line
+        ):
+            print(f"=== DEBUG_MATCH: linea '{line_id}' descartada por medida confirmada ausente en: {composed_line!r} ===")
             contradicted_indices.update(indices_for_line)
             continue
 
