@@ -183,6 +183,12 @@ No incluyas texto adicional, solo el JSON."""
 
     raw_response = call_claude(prompt)
 
+    print("=== DEBUG_MATCH: hallazgos enviados a Claude para matching/composicion ===")
+    print(findings_text)
+    print("=== DEBUG_MATCH: respuesta cruda de Claude ===")
+    print(raw_response)
+    print("=== FIN DEBUG_MATCH ===")
+
     try:
         cleaned = raw_response.strip()
         if cleaned.startswith("```"):
