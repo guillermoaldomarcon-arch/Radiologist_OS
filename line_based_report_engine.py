@@ -39,31 +39,59 @@ Safety principles preserved:
   the final report always follows the template's fixed line order,
   per Guille's explicit requirement that this must work regardless
   of dictation order.
-- A mechanical (non-AI) safety check runs after composition -- if a
-  line's normal text is bilateral ("ambos X normales") and a finding
-  mapped to it specifies laterality, the composed sentence must not
-  still contain a blanket bilateral claim. If it does, the
-  composition is not trusted; the finding is treated as unmatched
-  instead of risking a self-contradictory report (seen in
-  production: "ambos rinones normales" + masa unilateral en la misma
-  oracion).
-- NEW: a second mechanical safety check runs after composition -- if
-  a finding mapped to a line has a confirmed size_mm, the composed
-  sentence must literally contain that number. If Claude drops a
-  confirmed measurement while composing (seen in production: Regla B
-  del abogado del diablo confirma una medida, pero la oracion final
-  no la menciona), the composition is not trusted; the finding is
-  treated as unmatched instead of silently losing clinical data the
-  radiologist explicitly confirmed.
+- BILATERAL LINES (2026-09-26 redesign): lines whose normal_text says
+  "ambos"/"bilateral" are no longer composed by the AI at all --
+  composition for these is fully mechanical/deterministic (see
+  _compose_bilateral_line), general to ANY template that uses that
+  wording, without needing per-template changes (e.g. splitting
+  "rinones" into rinon_derecho/rinon_izquierdo). Retired approach:
+  an earlier version asked Claude to compose these lines and only
+  checked AFTER the fact whether it still said "ambos" while a
+  lateralized finding was present (_composed_line_contradicts_
+  bilateral_normal, removed). That caught the one-sided contradiction
+  case but still relied on the AI, and did not handle the case where
+  BOTH sides were dictated explicitly (seen in production 2026-09-26:
+  a bilateral pathological finding with both measurements ended up
+  entirely unmatched, leaving a false "ambos rinones normales" line
+  in the report). The new mechanical composer removes the AI from
+  this decision entirely.
+- A second mechanical safety check runs after composition -- if a
+  finding mapped to a line has a confirmed size_mm, the composed
+  sentence must literally contain that number. If Claude (or the
+  bilateral composer) drops a confirmed measurement (seen in
+  production: Regla B del abogado del diablo confirma una medida,
+  pero la oracion final no la menciona), the composition is not
+  trusted; the finding is treated as unmatched instead of silently
+  losing clinical data the radiologist explicitly confirmed.
 """
 
 import json
 import re
-from typing import Callable, List
+from typing import Callable, List, Optional
 
 from finding import Finding
 
 _MM_IN_TEXT_PATTERN = re.compile(r"(\d+(?:[.,]\d+)?)\s*mm\b", re.IGNORECASE)
+
+_SIDE_MAP = {
+    "derecho": "derecho", "derecha": "derecho", "der": "derecho", "right": "derecho",
+    "izquierdo": "izquierdo", "izquierda": "izquierdo", "izq": "izquierdo", "left": "izquierdo",
+    "bilateral": "bilateral", "bilaterales": "bilateral", "ambos": "bilateral",
+}
+_OPPOSITE_SIDE = {"derecho": "izquierdo", "izquierdo": "derecho"}
+
+
+def _capitalize_first(text: str) -> str:
+    text = text.strip()
+    if not text:
+        return text
+    return text[0].upper() + text[1:]
+
+
+def _normalize_side(side: Optional[str]) -> Optional[str]:
+    if not side:
+        return None
+    return _SIDE_MAP.get(side.strip().lower())
 
 
 def _build_lines_reference(template: dict) -> List[dict]:
@@ -99,25 +127,82 @@ def _group_finding_indices_by_line(matches: list) -> dict:
     return grouped
 
 
-def _composed_line_contradicts_bilateral_normal(
-    normal_text: str, composed_line: str, findings_for_line: List[Finding]
-) -> bool:
-    """
-    Chequeo mecanico (no IA): si el texto normal de la linea es bilateral
-    ("ambos X normales") y algun hallazgo mapeado a esa linea tiene
-    lateralidad explicita, la oracion compuesta NO puede seguir
-    conteniendo una afirmacion bilateral generica -- eso es exactamente
-    la contradiccion vista en produccion ("ambos rinones normales" +
-    masa unilateral en el mismo parrafo). No decide contenido clinico,
-    solo decide si confiar en la composicion de la IA o fallar visible.
-    """
+def _is_bilateral_normal_line(normal_text: str) -> bool:
     normal_lower = normal_text.lower()
-    composed_lower = composed_line.lower()
+    return "ambos" in normal_lower or "bilateral" in normal_lower
 
-    is_bilateral_normal_line = "ambos" in normal_lower or "bilateral" in normal_lower
-    has_lateralized_finding = any(f.side for f in findings_for_line)
 
-    return is_bilateral_normal_line and has_lateralized_finding and "ambos" in composed_lower
+def _compose_bilateral_line(
+    normal_text: str, findings_for_line: List[Finding]
+) -> Optional[str]:
+    """
+    Composicion deterministica (sin IA) para lineas de plantilla
+    bilaterales -- ver nota en el docstring del modulo. Regla general,
+    aplicable a cualquier template que use "ambos"/"bilateral" en su
+    normal_text, sin necesidad de tocar el JSON de la plantilla:
+
+    - Si los hallazgos mapeados a esta linea mencionan un solo lado
+      (derecho O izquierdo, nunca los dos), se usa el texto dictado
+      para ese lado tal cual + una oracion fija para el lado
+      contralateral: "[Organo] contralateral es de morfologia y
+      tamaño normal."
+    - Si los hallazgos cubren ambos lados de forma explicita (derecho
+      Y izquierdo dictados por separado), se arma una oracion por
+      lado con lo dictado, sin agregar relleno.
+    - Si un hallazgo ya viene marcado como side="bilateral" (el medico
+      dicto explicitamente que afecta a ambos lados), se usa ese
+      texto directo, sin agregar nada.
+    - Si la linea no es bilateral, o hay lateralidad ambigua/faltante
+      que no permite resolverlo con confianza (ej: un hallazgo sin
+      side claro mezclado con otros que si lo tienen, o no hay forma
+      de nombrar el organo contralateral), devuelve None -- el
+      llamador debe tratar los hallazgos de esa linea como no
+      ubicados en vez de arriesgar una redaccion incorrecta.
+    """
+    if not _is_bilateral_normal_line(normal_text):
+        return None
+
+    by_side: dict = {"derecho": [], "izquierdo": [], "bilateral": []}
+    for f in findings_for_line:
+        side = _normalize_side(f.side)
+        if side is None:
+            # Hallazgo mapeado a una linea bilateral sin lateralidad
+            # reconocible -- no hay forma confiable de saber si cubre
+            # un lado, el otro, o ambos. Fallar visible.
+            return None
+        by_side[side].append(f)
+
+    def _sentence_from(findings: List[Finding]) -> Optional[str]:
+        texts = [(f.description or f.name).strip().rstrip(".") for f in findings]
+        joined = "; ".join(t for t in texts if t)
+        return _capitalize_first(joined) + "." if joined else None
+
+    if by_side["bilateral"]:
+        if by_side["derecho"] or by_side["izquierdo"]:
+            # Mezcla rara: un hallazgo dictado como "bilateral" y
+            # ademas otro lateralizado por separado en la misma linea.
+            # Ambiguo -- no combinar a ciegas, fallar visible.
+            return None
+        return _sentence_from(by_side["bilateral"])
+
+    organ_name = next((f.organ.strip() for f in findings_for_line if f.organ), None)
+
+    sentences = []
+    for side in ("derecho", "izquierdo"):
+        side_findings = by_side[side]
+        if side_findings:
+            sentence = _sentence_from(side_findings)
+            if not sentence:
+                return None
+            sentences.append(sentence)
+        else:
+            if not organ_name:
+                return None
+            sentences.append(
+                f"{_capitalize_first(organ_name)} contralateral es de morfología y tamaño normal."
+            )
+
+    return " ".join(sentences)
 
 
 def _composed_line_missing_confirmed_measurement(
@@ -294,17 +379,29 @@ No incluyas texto adicional, solo el JSON."""
     contradicted_indices = set()
 
     for line_id in matched_line_ids:
-        composed_line = composed_by_line_id.get(line_id)
         indices_for_line = indices_by_line_id.get(line_id, [])
         findings_for_line = [findings[i] for i in indices_for_line if 0 <= i < len(findings)]
         normal_text = line_id_to_normal_text.get(line_id, "")
 
-        if composed_line and _composed_line_contradicts_bilateral_normal(
-            normal_text, composed_line, findings_for_line
-        ):
-            print(f"=== DEBUG_MATCH: linea '{line_id}' descartada por contradiccion bilateral ===")
+        bilateral_line = _compose_bilateral_line(normal_text, findings_for_line)
+        if bilateral_line is not None:
+            if _composed_line_missing_confirmed_measurement(bilateral_line, findings_for_line):
+                print(f"=== DEBUG_MATCH: linea '{line_id}' (bilateral) descartada por medida confirmada ausente en: {bilateral_line!r} ===")
+                contradicted_indices.update(indices_for_line)
+                continue
+            result[line_id] = {"action": "replace", "composed_line": bilateral_line}
+            continue
+
+        if _is_bilateral_normal_line(normal_text):
+            # Es una linea bilateral pero no se pudo resolver de forma
+            # deterministica y confiable (lateralidad ambigua u organo
+            # no identificable) -- no confiar en la composicion de la
+            # IA para este tipo de linea, fallar visible.
+            print(f"=== DEBUG_MATCH: linea '{line_id}' (bilateral) no resoluble, hallazgos sin ubicar ===")
             contradicted_indices.update(indices_for_line)
             continue
+
+        composed_line = composed_by_line_id.get(line_id)
 
         if composed_line and _composed_line_missing_confirmed_measurement(
             composed_line, findings_for_line
