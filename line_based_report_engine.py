@@ -53,8 +53,20 @@ Safety principles preserved:
   BOTH sides were dictated explicitly (seen in production 2026-09-26:
   a bilateral pathological finding with both measurements ended up
   entirely unmatched, leaving a false "ambos rinones normales" line
-  in the report). The new mechanical composer removes the AI from
-  this decision entirely.
+  in the report).
+- CORRECTION (2026-09-26, same day): the first version of the
+  deterministic bilateral composer built each side's sentence from
+  Finding.description alone, assuming side/size_mm would already be
+  embedded in the free-text description. That held for one tested
+  case (bazo) but not for another (rinones dictados como "el derecho
+  mide 85 mm y el izquierdo mide 80 mm"), where parser_engine
+  correctly captured side/size_mm as structured fields but left
+  description as just the qualifier ("disminuido de tamaño..."),
+  with no subject or measurement in the free text at all -- producing
+  a sentence with neither. Fixed by building each side's sentence
+  explicitly from organ + side + description + size_mm (see
+  _sentence_for_side) instead of trusting description to be
+  self-contained.
 - A second mechanical safety check runs after composition -- if a
   finding mapped to a line has a confirmed size_mm, the composed
   sentence must literally contain that number. If Claude (or the
@@ -78,7 +90,6 @@ _SIDE_MAP = {
     "izquierdo": "izquierdo", "izquierda": "izquierdo", "izq": "izquierdo", "left": "izquierdo",
     "bilateral": "bilateral", "bilaterales": "bilateral", "ambos": "bilateral",
 }
-_OPPOSITE_SIDE = {"derecho": "izquierdo", "izquierdo": "derecho"}
 
 
 def _capitalize_first(text: str) -> str:
@@ -132,6 +143,47 @@ def _is_bilateral_normal_line(normal_text: str) -> bool:
     return "ambos" in normal_lower or "bilateral" in normal_lower
 
 
+def _sentence_for_side(
+    organ_name: Optional[str], side_label: Optional[str], findings: List[Finding]
+) -> Optional[str]:
+    """
+    Arma la oracion para un lado (o para un hallazgo ya dictado como
+    bilateral, con side_label=None) usando los campos ESTRUCTURADOS
+    del Finding (organ, side, size_mm), no solo el texto libre de
+    description. Necesario porque description puede venir sin sujeto
+    ni medida cuando el medico dicto la lateralidad y el numero por
+    separado del hallazgo en si (ej: "el derecho mide 85 mm" dicho
+    aparte de "disminuidos de tamaño de aspecto hipotroficos") -- ver
+    nota de correccion en el docstring del modulo.
+    """
+    if not findings:
+        return None
+
+    parts = []
+    for f in findings:
+        desc = (f.description or f.name or "").strip().rstrip(".")
+        if f.size_mm is not None and not _MM_IN_TEXT_PATTERN.search(desc):
+            try:
+                size_str = f"{float(f.size_mm):g} mm"
+            except (TypeError, ValueError):
+                size_str = None
+            if size_str:
+                desc = f"{desc}, mide {size_str}" if desc else f"mide {size_str}"
+        if desc:
+            parts.append(desc)
+
+    body = "; ".join(parts)
+    if not body:
+        return None
+
+    if organ_name and side_label:
+        subject = f"{_capitalize_first(organ_name)} {side_label}"
+        return f"{subject} {body}."
+    if organ_name:
+        return f"{_capitalize_first(organ_name)} {body}."
+    return _capitalize_first(body) + "."
+
+
 def _compose_bilateral_line(
     normal_text: str, findings_for_line: List[Finding]
 ) -> Optional[str]:
@@ -142,20 +194,18 @@ def _compose_bilateral_line(
     normal_text, sin necesidad de tocar el JSON de la plantilla:
 
     - Si los hallazgos mapeados a esta linea mencionan un solo lado
-      (derecho O izquierdo, nunca los dos), se usa el texto dictado
-      para ese lado tal cual + una oracion fija para el lado
-      contralateral: "[Organo] contralateral es de morfologia y
-      tamaño normal."
+      (derecho O izquierdo, nunca los dos), se arma la oracion para
+      ese lado (organo + side + hallazgo + medida) + una oracion fija
+      para el lado contralateral: "[Organo] contralateral es de
+      morfologia y tamaño normal."
     - Si los hallazgos cubren ambos lados de forma explicita (derecho
       Y izquierdo dictados por separado), se arma una oracion por
-      lado con lo dictado, sin agregar relleno.
+      lado, sin agregar relleno.
     - Si un hallazgo ya viene marcado como side="bilateral" (el medico
       dicto explicitamente que afecta a ambos lados), se usa ese
       texto directo, sin agregar nada.
     - Si la linea no es bilateral, o hay lateralidad ambigua/faltante
-      que no permite resolverlo con confianza (ej: un hallazgo sin
-      side claro mezclado con otros que si lo tienen, o no hay forma
-      de nombrar el organo contralateral), devuelve None -- el
+      que no permite resolverlo con confianza, devuelve None -- el
       llamador debe tratar los hallazgos de esa linea como no
       ubicados en vez de arriesgar una redaccion incorrecta.
     """
@@ -172,10 +222,7 @@ def _compose_bilateral_line(
             return None
         by_side[side].append(f)
 
-    def _sentence_from(findings: List[Finding]) -> Optional[str]:
-        texts = [(f.description or f.name).strip().rstrip(".") for f in findings]
-        joined = "; ".join(t for t in texts if t)
-        return _capitalize_first(joined) + "." if joined else None
+    organ_name = next((f.organ.strip() for f in findings_for_line if f.organ), None)
 
     if by_side["bilateral"]:
         if by_side["derecho"] or by_side["izquierdo"]:
@@ -183,15 +230,13 @@ def _compose_bilateral_line(
             # ademas otro lateralizado por separado en la misma linea.
             # Ambiguo -- no combinar a ciegas, fallar visible.
             return None
-        return _sentence_from(by_side["bilateral"])
-
-    organ_name = next((f.organ.strip() for f in findings_for_line if f.organ), None)
+        return _sentence_for_side(organ_name, None, by_side["bilateral"])
 
     sentences = []
     for side in ("derecho", "izquierdo"):
         side_findings = by_side[side]
         if side_findings:
-            sentence = _sentence_from(side_findings)
+            sentence = _sentence_for_side(organ_name, side, side_findings)
             if not sentence:
                 return None
             sentences.append(sentence)
@@ -486,54 +531,4 @@ def build_line_based_report(
             line_id = line["line_id"]
             action_entry = mapping.get(line_id)
 
-            if action_entry is not None and action_entry.get("action") == "replace":
-                section_lines.append(action_entry["composed_line"])
-                continue
-
-            omit_if_major = line.get("omit_if_replaced_by_major_finding", False)
-            if omit_if_major and section_has_finding:
-                continue
-
-            if action_entry is not None and action_entry.get("action") == "omit":
-                continue
-
-            section_lines.append(line["normal_text"])
-
-        result_sections.append(
-            {"section_title": section["section_title"], "lines": section_lines}
-        )
-
-    unmatched_findings = [pathological_findings[i] for i in unmatched_indices]
-
-    return {
-        "sections": result_sections,
-        "unmatched_findings": unmatched_findings,
-    }
-
-
-def render_report_text(template: dict, report_dict: dict) -> str:
-    """
-    Renders the structured report dict into plain text, matching
-    Guille's real format (technique paragraph, then each section with
-    its title and bullet lines).
-    """
-    lines_out = []
-    lines_out.append(template.get("display_name", "").upper())
-    lines_out.append("")
-    lines_out.append(template.get("default_technique_text", ""))
-    lines_out.append("")
-
-    for section in report_dict["sections"]:
-        lines_out.append(section["section_title"])
-        lines_out.append("")
-        for line in section["lines"]:
-            lines_out.append(f"\u00b7        {line}")
-        lines_out.append("")
-
-    if report_dict["unmatched_findings"]:
-        lines_out.append("--- HALLAZGOS SIN UBICAR (requieren revisión manual) ---")
-        for f in report_dict["unmatched_findings"]:
-            lines_out.append(f"\u00b7        {f.description}")
-        lines_out.append("")
-
-    return "\n".join(lines_out)
+            if action_entry is not
