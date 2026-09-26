@@ -28,6 +28,8 @@ _MANAGEMENT_PATTERNS = [
 ]
 _MANAGEMENT_RE = re.compile("|".join(_MANAGEMENT_PATTERNS), re.IGNORECASE)
 
+_MEASUREMENT_IN_TEXT_RE = re.compile(r"\d+(?:[.,]\d+)?\s*(mm|cm)\b", re.IGNORECASE)
+
 
 def contains_management_language(text: str) -> bool:
     return bool(_MANAGEMENT_RE.search(text or ""))
@@ -304,13 +306,40 @@ def classify_with_answers(organ: str, description: str, answers: dict) -> Option
     return result
 
 
+def _describe_finding_for_impression(f: Finding) -> str:
+    """
+    Arma la frase de sintesis para un finding usando sus campos
+    estructurados (side, size_mm), no solo el texto libre de
+    description. Se agregaron explicitamente porque se detecto en
+    produccion (2026-09-25) que un size_mm confirmado via Regla B del
+    abogado del diablo (ej: medida agregada despues por
+    [MEDIDA_CONFIRMADA]) puede no estar reflejado en el texto libre de
+    description, y la lateralidad (side) tampoco se menciona siempre
+    en el dictado tal cual quedo extraido. La Impresion Diagnostica
+    sugerida no puede perder esos datos aunque description no los
+    contenga -- misma logica que el chequeo mecanico ya aplicado en
+    line_based_report_engine para medidas confirmadas.
+    """
+    text = (f.description or f.name).strip().rstrip(".")
+
+    if f.side and f.side.lower() not in text.lower():
+        text = f"{text} ({f.side})"
+
+    if f.size_mm is not None and not _MEASUREMENT_IN_TEXT_RE.search(text):
+        try:
+            size_str = f"{float(f.size_mm):g} mm"
+        except (TypeError, ValueError):
+            size_str = None
+        if size_str:
+            text = f"{text}, {size_str}"
+
+    if text:
+        text = text[0].upper() + text[1:]
+    return text + "."
+
+
 def _tier1_resumen(active: List[Finding]) -> str:
-    sentences = []
-    for f in active:
-        text = (f.description or f.name).strip().rstrip(".")
-        if text:
-            text = text[0].upper() + text[1:]
-        sentences.append(text + ".")
+    sentences = [_describe_finding_for_impression(f) for f in active if (f.description or f.name)]
     return " ".join(sentences)
 
 
@@ -379,4 +408,3 @@ def review(
     if f_question:
         questions.append(f_question)
     return questions
-
