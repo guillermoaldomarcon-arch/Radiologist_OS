@@ -306,24 +306,40 @@ def classify_with_answers(organ: str, description: str, answers: dict) -> Option
     return result
 
 
+_SIDE_LABELS = {
+    "derecho": "derecho", "derecha": "derecho", "der": "derecho",
+    "izquierdo": "izquierdo", "izquierda": "izquierdo", "izq": "izquierdo",
+}
+
+
 def _describe_finding_for_impression(f: Finding) -> str:
     """
     Arma la frase de sintesis para un finding usando sus campos
-    estructurados (side, size_mm), no solo el texto libre de
-    description. Se agregaron explicitamente porque se detecto en
-    produccion (2026-09-25) que un size_mm confirmado via Regla B del
-    abogado del diablo (ej: medida agregada despues por
-    [MEDIDA_CONFIRMADA]) puede no estar reflejado en el texto libre de
-    description, y la lateralidad (side) tampoco se menciona siempre
-    en el dictado tal cual quedo extraido. La Impresion Diagnostica
-    sugerida no puede perder esos datos aunque description no los
-    contenga -- misma logica que el chequeo mecanico ya aplicado en
-    line_based_report_engine para medidas confirmadas.
+    estructurados (organ, side, size_mm), no solo el texto libre de
+    description -- mismo patron de redaccion ("[Organo] [lado]
+    [hallazgo], mide X mm.") que _sentence_for_side en
+    line_based_report_engine.py, para que la Impresion Diagnostica
+    sugerida no se lea distinto al cuerpo del informe para el mismo
+    hallazgo. Corregido dos veces en produccion: primero porque
+    size_mm/side podian faltar del todo del texto libre (2026-09-25),
+    despues porque ademas faltaba el nombre del organo (2026-09-26) --
+    el caso del bazo funcionaba por casualidad, porque su description
+    ya incluia el sujeto ("coleccion liquida periesplenica"); el del
+    riñon no, porque su description es solo un adjetivo suelto
+    ("disminuido de tamaño...") sin sujeto propio.
     """
-    text = (f.description or f.name).strip().rstrip(".")
+    desc = (f.description or f.name or "").strip().rstrip(".")
+    organ = f.organ.strip() if f.organ else None
+    side_label = _SIDE_LABELS.get((f.side or "").strip().lower())
 
-    if f.side and f.side.lower() not in text.lower():
-        text = f"{text} ({f.side})"
+    subject_parts = [p for p in (organ, side_label) if p]
+    if subject_parts and (not organ or organ.lower() not in desc.lower()):
+        subject = " ".join(subject_parts)
+        text = f"{subject} {desc}".strip() if desc else subject
+    else:
+        text = desc
+        if side_label and side_label not in text.lower():
+            text = f"{text} ({side_label})"
 
     if f.size_mm is not None and not _MEASUREMENT_IN_TEXT_RE.search(text):
         try:
@@ -331,11 +347,11 @@ def _describe_finding_for_impression(f: Finding) -> str:
         except (TypeError, ValueError):
             size_str = None
         if size_str:
-            text = f"{text}, {size_str}"
+            text = f"{text}, mide {size_str}" if text else f"mide {size_str}"
 
-    if text:
-        text = text[0].upper() + text[1:]
-    return text + "."
+    if not text:
+        return ""
+    return text[0].upper() + text[1:] + "."
 
 
 def _tier1_resumen(active: List[Finding]) -> str:
