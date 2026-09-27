@@ -225,7 +225,6 @@ def create_report(req: ReportRequest):
             req.dictation_text, call_claude=call_claude,
             organ_hints=template["expected_organs_or_regions"],
         )
-        print(f"=== DEBUG_CONFIRMED_LINE_ID: {[(f.name, f.organ, f.confirmed_line_id) for f in findings]} ===")
         report_dict = build_line_based_report(template, findings, call_claude)
     except ClaudeClientError as e:
         raise HTTPException(status_code=502, detail=f"Error llamando a Claude: {e}")
