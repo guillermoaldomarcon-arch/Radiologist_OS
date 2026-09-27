@@ -22,4 +22,6 @@ class Finding:
 
     certainty: str = "MODERATE"
 
+    confirmed_line_id: Optional[str] = None
+    
     status: str = "ACTIVE"
