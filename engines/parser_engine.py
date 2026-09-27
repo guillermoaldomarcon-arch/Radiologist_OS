@@ -162,7 +162,8 @@ Para CADA hallazgo distinto (patológico O explícitamente normal) en el dictado
   "side": string or null,
   "size_mm": number or null,
   "description": string,
-  "is_pathological": boolean
+  "is_pathological": boolean,
+  "confirmed_line_id": string or null
 }}
 
 Reglas estrictas:
@@ -170,6 +171,7 @@ Reglas estrictas:
 - Si el dictado no menciona una medida explícita en mm/cm, "size_mm" debe ser null -- NUNCA estimes ni inventes un valor.
 - Si no hay un hallazgo claro, no incluyas esa frase.
 - Regla especial para marcadores [MEDIDA_CONFIRMADA: <descripción> = <valor> mm]: si el dictado contiene una línea con ese formato exacto, es una instrucción literal del radiólogo, NO un hallazgo nuevo. Buscá, entre los hallazgos que ya identificaste en el resto del dictado, aquel cuya descripción coincida (razonablemente, no necesariamente palabra por palabra) con el texto entre "MEDIDA_CONFIRMADA:" y "=", y asignale ese "size_mm" a ESE hallazgo específico. NUNCA se lo asignes a otro hallazgo distinto, aunque esté más cerca en el texto. Si no encontrás ningún hallazgo cuya descripción coincida razonablemente, ignorá el marcador (no inventes un hallazgo nuevo solo por el marcador). El marcador en sí NUNCA debe aparecer como un hallazgo propio en tu respuesta.
+- Regla especial para marcadores [UBICACION_CONFIRMADA: <descripción> = <line_id>]: igual tratamiento que MEDIDA_CONFIRMADA -- es una instrucción literal del radiólogo, NO un hallazgo nuevo. Buscá, entre los hallazgos que ya identificaste, aquel cuya descripción coincida razonablemente con el texto entre "UBICACION_CONFIRMADA:" y "=", y asignale ese valor al campo "confirmed_line_id" de ESE hallazgo específico. Nunca se lo asignes a otro hallazgo distinto. Si no encontrás coincidencia razonable, ignorá el marcador. El marcador en sí nunca debe aparecer como hallazgo propio.
 - Respondé ÚNICAMENTE con un array JSON, sin texto adicional, sin markdown.
 
 Dictado:
@@ -270,6 +272,7 @@ def ai_findings_to_objects(
                 description=raw.get("description", ""),
                 certainty=certainty,
                 status=status,
+                confirmed_line_id=raw.get("confirmed_line_id"),
             )
         )
 
