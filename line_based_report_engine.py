@@ -531,4 +531,54 @@ def build_line_based_report(
             line_id = line["line_id"]
             action_entry = mapping.get(line_id)
 
-            if action_entry is not
+                       if action_entry is not None and action_entry.get("action") == "replace":
+                section_lines.append(action_entry["composed_line"])
+                continue
+
+            omit_if_major = line.get("omit_if_replaced_by_major_finding", False)
+            if omit_if_major and section_has_finding:
+                continue
+
+            if action_entry is not None and action_entry.get("action") == "omit":
+                continue
+
+            section_lines.append(line["normal_text"])
+
+        result_sections.append(
+            {"section_title": section["section_title"], "lines": section_lines}
+        )
+
+    unmatched_findings = [pathological_findings[i] for i in unmatched_indices]
+
+    return {
+        "sections": result_sections,
+        "unmatched_findings": unmatched_findings,
+    }
+
+
+def render_report_text(template: dict, report_dict: dict) -> str:
+    """
+    Renders the structured report dict into plain text, matching
+    Guille's real format (technique paragraph, then each section with
+    its title and bullet lines).
+    """
+    lines_out = []
+    lines_out.append(template.get("display_name", "").upper())
+    lines_out.append("")
+    lines_out.append(template.get("default_technique_text", ""))
+    lines_out.append("")
+
+    for section in report_dict["sections"]:
+        lines_out.append(section["section_title"])
+        lines_out.append("")
+        for line in section["lines"]:
+            lines_out.append(f"\u00b7        {line}")
+        lines_out.append("")
+
+    if report_dict["unmatched_findings"]:
+        lines_out.append("--- HALLAZGOS SIN UBICAR (requieren revisión manual) ---")
+        for f in report_dict["unmatched_findings"]:
+            lines_out.append(f"\u00b7        {f.description}")
+        lines_out.append("")
+
+    return "\n".join(lines_out)
