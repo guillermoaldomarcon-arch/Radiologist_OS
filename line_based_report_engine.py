@@ -531,8 +531,8 @@ def build_line_based_report(
             line_id = line["line_id"]
             action_entry = mapping.get(line_id)
 
-                       if action_entry is not None and action_entry.get("action") == "replace":
-                section_lines.append(action_entry["composed_line"])
+            if action_entry is not None and action_entry.get("action") == "replace":
+              section_lines.append(action_entry["composed_line"])
                 continue
 
             omit_if_major = line.get("omit_if_replaced_by_major_finding", False)
