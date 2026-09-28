@@ -328,18 +328,25 @@ def _describe_finding_for_impression(f: Finding) -> str:
     riñon no, porque su description es solo un adjetivo suelto
     ("disminuido de tamaño...") sin sujeto propio.
     """
-    desc = (f.description or f.name or "").strip().rstrip(".")
+        desc = (f.description or f.name or "").strip().rstrip(".")
     organ = f.organ.strip() if f.organ else None
     side_label = _SIDE_LABELS.get((f.side or "").strip().lower())
 
-    subject_parts = [p for p in (organ, side_label) if p]
-    if subject_parts and (not organ or organ.lower() not in desc.lower()):
+    desc_no_accents = _strip_accents(desc.lower())
+    organ_present = bool(organ) and _strip_accents(organ.lower()) in desc_no_accents
+    side_present = bool(side_label) and side_label.rstrip("o") in desc_no_accents
+
+    subject_parts = []
+    if organ and not organ_present:
+        subject_parts.append(organ)
+    if side_label and not side_present:
+        subject_parts.append(side_label)
+
+    if subject_parts:
         subject = " ".join(subject_parts)
         text = f"{subject} {desc}".strip() if desc else subject
     else:
         text = desc
-        if side_label and side_label not in text.lower():
-            text = f"{text} ({side_label})"
 
     if f.size_mm is not None and not _MEASUREMENT_IN_TEXT_RE.search(text):
         try:
