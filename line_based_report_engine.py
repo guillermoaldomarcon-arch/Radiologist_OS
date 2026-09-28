@@ -283,26 +283,49 @@ def _composed_line_missing_confirmed_measurement(
     return False
 
 
-def _match_findings_to_lines(
+def _compose_confirmed_line(
+    line_id: str, findings_for_line: List[Finding], normal_text: str
+) -> Optional[str]:
+    """
+    Compone una linea cuyo destino ya fue confirmado explicitamente por
+    el medico (Finding.confirmed_line_id), sin pasar por Claude para el
+    matching -- el "donde" ya no es una decision de la IA. La redaccion
+    en si reusa la misma composicion deterministica que ya existe para
+    bilaterales, y el mismo builder de oracion (_sentence_for_side) para
+    el caso no-bilateral, para no duplicar la logica de inyeccion de
+    size_mm ya probada.
+    """
+    bilateral_line = _compose_bilateral_line(normal_text, findings_for_line)
+    if bilateral_line is not None:
+        if _composed_line_missing_confirmed_measurement(bilateral_line, findings_for_line):
+            return None
+        return bilateral_line
+
+    if _is_bilateral_normal_line(normal_text):
+        # Bilateral pero no resoluble con confianza (mismo criterio que
+        # el resto del modulo) -- no forzar una redaccion dudosa.
+        return None
+
+    composed = _sentence_for_side(None, None, findings_for_line)
+    if not composed:
+        return None
+    if _composed_line_missing_confirmed_measurement(composed, findings_for_line):
+        return None
+    return composed
+
+
+def _match_via_claude(
     findings: List[Finding],
     flat_lines: List[dict],
     call_claude: Callable[[str], str],
 ) -> dict:
     """
-    Asks Claude to (1) map each pathological (ACTIVE) finding to the
-    line_id it corresponds to, and (2) compose the final sentence for
-    each affected line, combining the still-valid parts of the normal
-    text with the dictated finding(s).
-
-    Returns a dict:
-        {
-          "line_id": {"action": "replace", "composed_line": str},
-          ...
-          "_unmatched": [finding_index, ...]
-        }
-
-    Findings the AI cannot confidently map appear in "_unmatched" --
-    they are never silently dropped.
+    Logica de matching+composicion por IA -- identica a la version
+    anterior de _match_findings_to_lines, ahora aislada para poder
+    correr solo sobre los findings que NO tienen confirmed_line_id.
+    Los indices en el resultado son relativos a la lista `findings`
+    que se le pasa, no a la lista original completa -- el llamador
+    (_match_findings_to_lines) es responsable de traducirlos de vuelta.
     """
     if not findings:
         return {"_unmatched": []}
@@ -356,12 +379,6 @@ Donde:
 
 No incluyas texto adicional, solo el JSON."""
 
-    # Reintento con reprompt correctivo si Claude devuelve JSON malformado.
-    # Se dejo este mecanismo como red de seguridad general (formato
-    # de respuesta), aunque la causa raiz confirmada en produccion
-    # (2026-09-25) para la perdida de medidas confirmadas NO era esta
-    # -- el JSON parseaba bien y el problema era que la oracion
-    # compuesta omitia el numero. Ver _composed_line_missing_confirmed_measurement.
     max_attempts = 2
     data = None
 
@@ -438,10 +455,6 @@ No incluyas texto adicional, solo el JSON."""
             continue
 
         if _is_bilateral_normal_line(normal_text):
-            # Es una linea bilateral pero no se pudo resolver de forma
-            # deterministica y confiable (lateralidad ambigua u organo
-            # no identificable) -- no confiar en la composicion de la
-            # IA para este tipo de linea, fallar visible.
             print(f"=== DEBUG_MATCH: linea '{line_id}' (bilateral) no resoluble, hallazgos sin ubicar ===")
             contradicted_indices.update(indices_for_line)
             continue
@@ -471,6 +484,89 @@ No incluyas texto adicional, solo el JSON."""
     return result
 
 
+def _match_findings_to_lines(
+    findings: List[Finding],
+    flat_lines: List[dict],
+    call_claude: Callable[[str], str],
+) -> dict:
+    """
+    Punto de entrada principal. Separa los findings en dos grupos antes
+    de decidir ubicacion:
+
+    1. Los que ya tienen Finding.confirmed_line_id (el medico ya
+       confirmo explicitamente, via chip/marcador UBICACION_CONFIRMADA,
+       a que linea van) -- se ubican directo, SIN pasar por Claude para
+       el matching. El grupo de aprendizaje automatico (Regla de
+       placement aprendido via Postgres) todavia no esta implementado
+       -- queda pendiente, se sumara aca como un tercer grupo.
+    2. El resto -- sigue el flujo de matching por IA de siempre
+       (_match_via_claude), sin cambios de comportamiento.
+
+    Los indices en el resultado final son SIEMPRE relativos a la lista
+    `findings` original completa, sin importar por cual de los dos
+    caminos paso cada uno.
+    """
+    if not findings:
+        return {"_unmatched": []}
+
+    line_id_to_normal_text = {l["line_id"]: l["normal_text"] for l in flat_lines}
+    valid_line_ids = set(line_id_to_normal_text)
+
+    confirmed_indices_by_line: dict = {}
+    remaining_indices: List[int] = []
+
+    for i, f in enumerate(findings):
+        if f.confirmed_line_id and f.confirmed_line_id in valid_line_ids:
+            confirmed_indices_by_line.setdefault(f.confirmed_line_id, []).append(i)
+        else:
+            remaining_indices.append(i)
+
+    result: dict = {}
+    contradicted_indices = set()
+    resolved_confirmed_indices = set()
+
+    for line_id, indices in confirmed_indices_by_line.items():
+        findings_for_line = [findings[i] for i in indices]
+        normal_text = line_id_to_normal_text[line_id]
+        composed = _compose_confirmed_line(line_id, findings_for_line, normal_text)
+        if composed is None:
+            print(f"=== DEBUG_MATCH: linea '{line_id}' confirmada explicitamente pero no se pudo componer, queda sin ubicar ===")
+            contradicted_indices.update(indices)
+            continue
+        result[line_id] = {"action": "replace", "composed_line": composed}
+        resolved_confirmed_indices.update(indices)
+
+    # El resto (findings sin confirmed_line_id valido, mas los que
+    # quedaron contradichos arriba) va a Claude como antes. Los indices
+    # que Claude devuelve son relativos a `remaining_findings`, hay que
+    # traducirlos de vuelta a los indices reales de `findings`.
+    truly_remaining = [
+        i for i in remaining_indices if i not in resolved_confirmed_indices
+    ] + sorted(contradicted_indices)
+    truly_remaining = sorted(set(truly_remaining))
+
+    remaining_findings = [findings[i] for i in truly_remaining]
+    local_to_global = {local: global_i for local, global_i in enumerate(truly_remaining)}
+
+    claude_result = _match_via_claude(remaining_findings, flat_lines, call_claude)
+
+    for line_id, entry in claude_result.items():
+        if line_id == "_unmatched":
+            continue
+        # composed_line ya viene armado; no hay indices que traducir aca,
+        # pero si dos grupos (confirmado + IA) mapearan a la MISMA linea
+        # en el mismo request (caso raro, pero posible), no sobreescribir
+        # silenciosamente -- avisar.
+        if line_id in result:
+            print(f"=== DEBUG_MATCH: linea '{line_id}' recibida tanto por confirmacion explicita como por matching de Claude en el mismo request -- se prioriza la confirmacion explicita ===")
+            continue
+        result[line_id] = entry
+
+    global_unmatched = [local_to_global[i] for i in claude_result.get("_unmatched", [])]
+    result["_unmatched"] = sorted(global_unmatched)
+
+    return result
+  
 def build_line_based_report(
     template: dict,
     findings: List[Finding],
