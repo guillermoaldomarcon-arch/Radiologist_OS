@@ -328,7 +328,7 @@ def _describe_finding_for_impression(f: Finding) -> str:
     riñon no, porque su description es solo un adjetivo suelto
     ("disminuido de tamaño...") sin sujeto propio.
     """
-        desc = (f.description or f.name or "").strip().rstrip(".")
+    desc = (f.description or f.name or "").strip().rstrip(".")
     organ = f.organ.strip() if f.organ else None
     side_label = _SIDE_LABELS.get((f.side or "").strip().lower())
 
