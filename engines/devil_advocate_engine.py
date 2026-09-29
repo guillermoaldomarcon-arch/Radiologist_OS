@@ -104,6 +104,7 @@ def check_missing_measurement(findings: List[Finding]) -> List[DevilQuestion]:
             ))
     return out
 
+
 MODALITY_TERM_CONFLICTS = {
     "RM": {
         "hipodenso": "hipointenso", "hipodensa": "hipointensa",
@@ -451,8 +452,8 @@ def suggest_impression_level(
         closure_candidates={"nivel_1": tier1, "nivel_2": None, "nivel_3": tier3},
     )
 
-    
-    def review(
+
+def review(
     findings: List[Finding], modality: str, quality_issues: Optional[list] = None
 ) -> List[DevilQuestion]:
     questions = []
