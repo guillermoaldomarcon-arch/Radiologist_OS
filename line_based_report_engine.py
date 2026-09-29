@@ -651,6 +651,25 @@ def build_line_based_report(
         "unmatched_findings": unmatched_findings,
     }
 
+_ANY_MEASUREMENT_PATTERN = re.compile(r"\d+(?:[.,]\d+)?\s*(mm|cm)\b", re.IGNORECASE)
+
+
+def _describe_unmatched_finding(f: Finding) -> str:
+    """
+    Texto de un hallazgo sin ubicar para el informe: descripcion + la
+    medida confirmada (size_mm) si esa medida no esta ya escrita en la
+    descripcion. Mismo criterio que _sentence_for_side.
+    """
+    desc = (f.description or f.name or "").strip().rstrip(".")
+    if f.size_mm is not None and not _ANY_MEASUREMENT_PATTERN.search(desc):
+        try:
+            size_str = f"{float(f.size_mm):g} mm"
+        except (TypeError, ValueError):
+            size_str = None
+        if size_str:
+            desc = f"{desc}, mide {size_str}" if desc else f"mide {size_str}"
+    return desc
+
 
 def render_report_text(template: dict, report_dict: dict) -> str:
     """
@@ -674,7 +693,7 @@ def render_report_text(template: dict, report_dict: dict) -> str:
     if report_dict["unmatched_findings"]:
         lines_out.append("--- HALLAZGOS SIN UBICAR (requieren revisión manual) ---")
         for f in report_dict["unmatched_findings"]:
-            lines_out.append(f"\u00b7        {f.description}")
+            lines_out.append(f"\u00b7        {_describe_unmatched_finding(f)}")
         lines_out.append("")
 
     return "\n".join(lines_out)
