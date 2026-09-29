@@ -3,6 +3,15 @@
 import { useState } from "react";
 import { useReportStore } from "@/stores/reportStore";
 import { HelpCircle, Lightbulb, MessageSquareWarning, Sparkles } from "lucide-react";
+// Normaliza la medida tipeada a mm. Acepta "11", "11 mm", "1,1 cm", "1.1cm".
+// Devuelve null si no es una medida simple.
+function parseMeasurementToMm(raw: string): string | null {
+  const m = raw.trim().match(/^(\d+(?:[.,]\d+)?)\s*(mm|cm)?$/i);
+  if (!m) return null;
+  const num = parseFloat(m[1].replace(",", "."));
+  const mm = (m[2] ?? "mm").toLowerCase() === "cm" ? num * 10 : num;
+  return String(Math.round(mm * 10) / 10);
+}
 
 function DevilQuestionCard({
   question,
@@ -12,6 +21,7 @@ function DevilQuestionCard({
   onAnswer: (text: string) => void;
 }) {
   const [freeText, setFreeText] = useState("");
+  const [inputError, setInputError] = useState<string | null>(null);
   const candidateEntries = Object.entries(question.closure_candidates ?? {}).filter(
     ([, value]) => value !== null && value !== undefined && String(value).trim() !== ""
   );
@@ -21,13 +31,20 @@ function DevilQuestionCard({
   // al reparsear) y caemos a finding_name solo si no hay descripción.
   const anchor = question.finding_description || question.finding_name;
 
-  const answerWithContext = (value: string) => {
-    if (anchor) {
-      onAnswer(`[MEDIDA_CONFIRMADA: ${anchor} = ${value} mm]`);
-    } else {
-      onAnswer(value);
+  const answerWithContext = (value: string): boolean => {
+  if (question.rule_type === "B") {
+    const mm = parseMeasurementToMm(value);
+    if (mm === null) {
+      setInputError("Ingresá solo la medida, ej. 11 mm o 1,1 cm");
+      return false;
     }
-  };
+    setInputError(null);
+    onAnswer(anchor ? `[MEDIDA_CONFIRMADA: ${anchor} = ${mm} mm]` : `${mm} mm`);
+    return true;
+  }
+  onAnswer(value);
+  return true;
+};
 
   const missingFieldNames = Object.keys(question.missing_fields ?? {});
   const hasCandidates = candidateEntries.length > 0;
@@ -73,8 +90,8 @@ function DevilQuestionCard({
           />
           <button
             onClick={() => {
-              if (freeText.trim()) {
-                answerWithContext(freeText.trim());
+              if (freeText.trim() && answerWithContext(freeText.trim())) {
+                
                 setFreeText("");
               }
             }}
@@ -84,6 +101,7 @@ function DevilQuestionCard({
           </button>
         </div>
       )}
+      {inputError && <p className="text-xs text-red-400">{inputError}</p>}
     </div>
   );
 }
