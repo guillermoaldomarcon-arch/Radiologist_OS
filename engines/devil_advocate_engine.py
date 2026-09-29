@@ -17,6 +17,22 @@ _ACCENT_MAP = str.maketrans("áéíóúÁÉÍÓÚ", "aeiouAEIOU")
 def _strip_accents(text: str) -> str:
     return text.translate(_ACCENT_MAP)
 
+_ORGAN_STOPWORDS = {"region", "espacio", "area", "zona", "de", "del", "la", "el"}
+
+
+def _organ_meaningfully_present(organ: str, desc_no_accents: str) -> bool:
+    """
+    Ademas del chequeo de substring exacto, considera presente el organ
+    si cualquiera de sus palabras significativas (descartando genericas
+    como "region"/"espacio") ya aparece en la descripcion -- cubre el
+    caso donde la IA extrae un organ compuesto ("Region subhepatica")
+    pero la ubicacion ya esta embebida como adjetivo en desc ("masa...
+    subhepatica...").
+    """
+    organ_words = _strip_accents(organ.lower()).split()
+    meaningful = [w for w in organ_words if w not in _ORGAN_STOPWORDS and len(w) > 3]
+    return any(w in desc_no_accents for w in meaningful)
+
 
 _MANAGEMENT_PATTERNS = [
     r"se recomienda\s+(control|seguimiento|repetir|evaluar|biopsia|derivar)",
@@ -333,7 +349,10 @@ def _describe_finding_for_impression(f: Finding) -> str:
     side_label = _SIDE_LABELS.get((f.side or "").strip().lower())
 
     desc_no_accents = _strip_accents(desc.lower())
-    organ_present = bool(organ) and _strip_accents(organ.lower()) in desc_no_accents
+    organ_present = bool(organ) and (
+        _strip_accents(organ.lower()) in desc_no_accents
+        or _organ_meaningfully_present(organ, desc_no_accents)
+    )
     side_present = bool(side_label) and side_label.rstrip("o") in desc_no_accents
 
     subject_parts = []
