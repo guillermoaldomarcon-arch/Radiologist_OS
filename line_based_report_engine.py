@@ -117,7 +117,7 @@ def _build_lines_reference(template: dict) -> List[dict]:
                 {
                     "line_id": line["line_id"],
                     "section_id": section["section_id"],
-                    "concept": line["concept"],
+                    "concept": line["concept"], "optional": line.get("optional", False),
                     "normal_text": line["normal_text"],
                     "omit_if_replaced_by_major_finding": line.get(
                         "omit_if_replaced_by_major_finding", False
@@ -459,7 +459,7 @@ No incluyas texto adicional, solo el JSON."""
             contradicted_indices.update(indices_for_line)
             continue
 
-        composed_line = composed_by_line_id.get(line_id)
+        composed_line = _sentence_for_side(None, None, findings_for_line) if any(l["line_id"] == line_id and l.get("optional") for l in flat_lines) else composed_by_line_id.get(line_id)
 
         if composed_line and _composed_line_missing_confirmed_measurement(
             composed_line, findings_for_line
@@ -632,7 +632,7 @@ def build_line_based_report(
                 continue
 
             omit_if_major = line.get("omit_if_replaced_by_major_finding", False)
-            if omit_if_major and section_has_finding:
+            if line.get("optional", False) or (omit_if_major and section_has_finding):
                 continue
 
             if action_entry is not None and action_entry.get("action") == "omit":
