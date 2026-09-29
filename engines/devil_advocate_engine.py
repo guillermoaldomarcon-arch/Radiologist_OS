@@ -80,18 +80,29 @@ class DevilQuestion:
         return f"DevilQuestion(finding={target!r}, rule={self.rule_type}, severity={self.severity!r})"
 
 
+def _short(text: Optional[str], limit: int = 60) -> str:
+    """Recorta a `limit` caracteres sin cortar palabras. Solo para mostrar."""
+    text = " ".join((text or "").split())
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0] or text[:limit]
+    return cut.rstrip(",.;:") + "…"
+
+
 def check_missing_measurement(findings: List[Finding]) -> List[DevilQuestion]:
     out = []
     for f in findings:
         if f.status == "ACTIVE" and f.size_mm is None:
+            desc = _short(f.description)
+            name_in_desc = _strip_accents((f.name or "").lower()) in _strip_accents(desc.lower())
+            label = f"{f.name}: {desc}" if (desc and not name_in_desc) else (desc or f.name)
             out.append(DevilQuestion(
                 finding=f,
-                question=f"Mencionaste '{f.name}' sin medida. ¿Tenés la dimensión?",
+                question=f"Mencionaste '{label}' sin medida. ¿Tenés la dimensión?",
                 reason="Finding ACTIVE sin size_mm.",
                 rule_type="B",
             ))
     return out
-
 
 MODALITY_TERM_CONFLICTS = {
     "RM": {
@@ -409,37 +420,39 @@ def suggest_impression_level(
 
     quality_issues = quality_issues or []
     flagged_names = {qi.finding.name for qi in quality_issues if getattr(qi, "finding", None)}
-    has_flag = any(f.name in flagged_names for f in active)
+    flagged_active = [f.name for f in active if f.name in flagged_names]
+    has_flag = bool(flagged_active)
 
     tier1 = _tier1_resumen(active)
     tier3 = None if has_flag else _tier3_candidate(active)
 
     if has_flag:
-        question = ("Hay hallazgos marcados por Quality Engine -- resolvelos antes "
-                     "de elegir el nivel de cierre de la impresión.")
+        question = (f"Control de calidad marcó: {', '.join(flagged_active)}. "
+                    "Revisalo antes de cerrar la impresión diagnóstica.")
+        reason = "Hallazgo marcado por el control de calidad."
     elif len(active) == 1 and tier3:
-        question = (f"El informe no genera Impresión Diagnóstica (el pipeline actual "
-                     f"no la construye). Un solo hallazgo con clasificación disponible "
-                     f"-- Nivel 3 parece razonable. ¿Cuál preferís?")
+        question = ("La impresión diagnóstica todavía no está redactada. "
+                    "Podés cerrarla con el resumen o con la clasificación. ¿Cuál preferís?")
+        reason = "Un hallazgo activo con clasificación disponible."
     elif len(active) >= 2:
-        question = (f"El informe no genera Impresión Diagnóstica. Hay {len(active)} "
-                     f"hallazgos activos -- Nivel 2 (síntesis) puede ser más claro que "
-                     f"listarlos por separado. ¿Cuál preferís?")
+        question = (f"La impresión diagnóstica todavía no está redactada. "
+                    f"Hay {len(active)} hallazgos activos; el resumen sugerido los junta en un solo párrafo.")
+        reason = f"{len(active)} hallazgos activos sin impresión redactada."
     else:
-        question = ("El informe no genera Impresión Diagnóstica. Nivel 1 (resumen) "
-                     "puede alcanzar para este caso. ¿Cuál preferís?")
+        question = ("La impresión diagnóstica todavía no está redactada. "
+                    "¿Usamos este resumen?")
+        reason = "Un hallazgo activo sin impresión redactada."
 
     return DevilQuestion(
         finding=None,
         question=question,
-        reason=f"{len(active)} hallazgo(s) activo(s), flags={has_flag}, "
-               f"clasificación disponible={tier3 is not None}.",
+        reason=reason,
         rule_type="F",
         closure_candidates={"nivel_1": tier1, "nivel_2": None, "nivel_3": tier3},
     )
 
-
-def review(
+    
+    def review(
     findings: List[Finding], modality: str, quality_issues: Optional[list] = None
 ) -> List[DevilQuestion]:
     questions = []
