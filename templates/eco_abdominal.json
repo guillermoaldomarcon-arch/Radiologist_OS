@@ -18,5 +18,5 @@
       ]
     }
   ],
-  "expected_organs_or_regions": ["hígado", "vesícula biliar", "vía biliar", "páncreas", "aorta abdominal", "vena cava inferior", "riñón", "riñones", "bazo", "litiasis", "lesión focal"]
+  "expected_organs_or_regions": ["hígado", "vesícula biliar", "vía biliar", "páncreas", "aorta abdominal", "vena cava inferior", "riñón", "riñones", "bazo", "litiasis", ""lesión focal", "apéndice"]"]
 }
