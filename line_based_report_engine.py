@@ -182,6 +182,45 @@ def _sentence_for_side(
     if organ_name:
         return _subject_sentence(organ_name, None, body)
     return _capitalize_first(body) + "."
+_LINK_VERB_NOUNS = {
+    "masa", "masas", "quiste", "quistes", "nodulo", "nodulos", "polipo", "polipos",
+    "calculo", "calculos", "absceso", "abscesos", "tumor", "tumores", "imagen",
+    "imagenes", "liquido", "barro", "lito", "litos", "trombo", "placa", "placas",
+    "diverticulo", "diverticulos", "ganglio", "ganglios", "aneurisma", "edema",
+    "hematoma", "hematomas", "aumento", "aumentos",
+}
+_LINK_VERB_SUFFIXES = (
+    "cion", "ciones", "sion", "siones", "miento", "mientos", "dad", "dades",
+    "ia", "itis", "osis", "iasis", "oma", "omas",
+)
+
+
+def _link_verb(text: str, organ: Optional[str], organ_present: bool) -> str:
+    """
+    " presenta" / " presentan" cuando hay que anteponer el órgano y el hallazgo
+    arranca con un sustantivo ("Riñón derecho masa sólida" queda telegráfico).
+    Vacío con participios, adjetivos o preposiciones ("disminuido de tamaño",
+    "con masa..."), donde agregar el verbo sonaría mal.
+    """
+    if not organ or organ_present:
+        return ""
+    plain = text.strip().lower().translate(str.maketrans("áéíóú", "aeiou"))
+    first = plain.split(" ")[0].strip(",.;:") if plain else ""
+    if not first:
+        return ""
+    if first not in _LINK_VERB_NOUNS and not first.endswith(_LINK_VERB_SUFFIXES):
+        return ""
+    organ_words = organ.strip().lower().translate(str.maketrans("áéíóú", "aeiou")).split()
+    last = organ_words[-1] if organ_words else ""
+    plural = last.endswith(("es", "os", "as")) and last not in ("pancreas", "tiroides")
+    return " presentan" if plural else " presenta"
+
+
+def _lower_first(text: str) -> str:
+    if len(text) > 1 and text[0].isupper() and not text[1].isupper():
+        return text[0].lower() + text[1:]
+    return text
+
 
 _ACCENTS = str.maketrans("áéíóúÁÉÍÓÚ", "aeiouAEIOU")
 
@@ -211,7 +250,7 @@ def _subject_sentence(organ_name: Optional[str], side_label: Optional[str], body
 
     if len(body) > 1 and body[0].isupper() and not body[1].isupper():
         body = body[0].lower() + body[1:]
-    return f"{' '.join(parts)} {body}."
+    return f"{' '.join(parts)}{_link_verb(body, organ_name, organ_present)} {body}."
 
 
 def _compose_bilateral_line(
