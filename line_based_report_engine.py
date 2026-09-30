@@ -178,10 +178,40 @@ def _sentence_for_side(
 
     if organ_name and side_label:
         subject = f"{_capitalize_first(organ_name)} {side_label}"
-        return f"{subject} {body}."
+        return _subject_sentence(organ_name, side_label, body)
     if organ_name:
-        return f"{_capitalize_first(organ_name)} {body}."
+        return _subject_sentence(organ_name, None, body)
     return _capitalize_first(body) + "."
+
+_ACCENTS = str.maketrans("áéíóúÁÉÍÓÚ", "aeiouAEIOU")
+
+
+def _subject_sentence(organ_name: Optional[str], side_label: Optional[str], body: str) -> str:
+    """
+    Antepone órgano y lado al hallazgo SOLO si el texto del hallazgo no los
+    menciona ya. Evita "Riñón derecho Riñón derecho de 85 mm..." cuando el
+    parser trae la descripción completa. Mismo criterio que
+    _describe_finding_for_impression en devil_advocate_engine.py.
+    """
+    body_norm = body.lower().translate(_ACCENTS)
+    organ_norm = (organ_name or "").lower().translate(_ACCENTS)
+    organ_present = bool(organ_norm) and organ_norm in body_norm
+    side_present = bool(side_label) and side_label.rstrip("o") in body_norm
+
+    if organ_present and side_label and not side_present:
+        return f"{_capitalize_first(body)}, del lado {side_label}."
+
+    parts = []
+    if organ_name and not organ_present:
+        parts.append(_capitalize_first(organ_name))
+    if side_label and not side_present:
+        parts.append(side_label)
+    if not parts:
+        return _capitalize_first(body) + "."
+
+    if len(body) > 1 and body[0].isupper() and not body[1].isupper():
+        body = body[0].lower() + body[1:]
+    return f"{' '.join(parts)} {body}."
 
 
 def _compose_bilateral_line(
