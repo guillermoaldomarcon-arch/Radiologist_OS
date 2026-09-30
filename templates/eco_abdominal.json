@@ -14,9 +14,15 @@
         {"line_id": "pancreas", "normal_text": "Páncreas de tamaño y ecoestructura homogénea sin alteraciones.", "concept": "tamaño y ecoestructura del páncreas", "omit_if_replaced_by_major_finding": false},
         {"line_id": "aorta_vena_cava", "normal_text": "Aorta abdominal y vena cava inferior permeable, de calibre normal.", "concept": "permeabilidad y calibre de aorta abdominal y vena cava inferior", "omit_if_replaced_by_major_finding": false},
         {"line_id": "rinones", "normal_text": "Ambos Riñones de forma, tamaño y posición normal, conservan la relación corticomedular y no muestran dilatación de los sistemas colectores.", "concept": "forma, tamaño, posición, relación corticomedular y dilatación pielocalicial de ambos riñones", "omit_if_replaced_by_major_finding": false},
-        {"line_id": "bazo", "normal_text": "Bazo de dimensiones y ecoestructura normal, sin alteraciones.", "concept": "dimensiones y ecoestructura del bazo", "omit_if_replaced_by_major_finding": false}
+        {"line_id": "bazo", "normal_text": "Bazo de dimensiones y ecoestructura normal, sin alteraciones.", "concept": "dimensiones y ecoestructura del bazo", "omit_if_replaced_by_major_finding": false},
+        {"line_id": "estomago", "normal_text": "Estómago sin alteraciones.", "concept": "estómago: paredes, contenido y lesiones", "omit_if_replaced_by_major_finding": false, "optional": true},
+        {"line_id": "intestino_delgado", "normal_text": "Intestino delgado (yeyuno e íleon) sin alteraciones.", "concept": "intestino delgado, yeyuno e íleon: paredes, calibre y contenido", "omit_if_replaced_by_major_finding": false, "optional": true},
+        {"line_id": "intestino_grueso", "normal_text": "Intestino grueso sin alteraciones.", "concept": "intestino grueso y colon: paredes, contenido y lesiones", "omit_if_replaced_by_major_finding": false, "optional": true},
+        {"line_id": "apendice", "normal_text": "Apéndice cecal sin alteraciones.", "concept": "apéndice cecal: diámetro, paredes, apendicolito y líquido periapendicular", "omit_if_replaced_by_major_finding": false, "optional": true},
+        {"line_id": "suprarrenales", "normal_text": "Glándulas suprarrenales sin alteraciones.", "concept": "glándulas suprarrenales: tamaño y lesiones nodulares", "omit_if_replaced_by_major_finding": false, "optional": true},
+        {"line_id": "pared_abdominal", "normal_text": "Pared abdominal sin alteraciones.", "concept": "pared abdominal: hernias, colecciones y lesiones de partes blandas", "omit_if_replaced_by_major_finding": false, "optional": true}
       ]
     }
   ],
-  "expected_organs_or_regions": ["hígado", "vesícula biliar", "vía biliar", "páncreas", "aorta abdominal", "vena cava inferior", "riñón", "riñones", "bazo", "litiasis", ""lesión focal", "apéndice"]
+  "expected_organs_or_regions": ["hígado", "vesícula biliar", "vía biliar", "páncreas", "aorta abdominal", "vena cava inferior", "riñón", "riñones", "bazo", "litiasis", "lesión focal", "apéndice", "glándulas suprarrenales", "suprarrenal", "intestino grueso", "colon", "intestino delgado", "yeyuno", "íleon", "estómago", "pared abdominal"]
 }
