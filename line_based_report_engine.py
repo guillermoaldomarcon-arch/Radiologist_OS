@@ -82,6 +82,7 @@ import re
 from typing import Callable, List, Optional
 
 from finding import Finding
+import measure_engine
 
 _MM_IN_TEXT_PATTERN = re.compile(r"(\d+(?:[.,]\d+)?)\s*mm\b", re.IGNORECASE)
 
@@ -200,7 +201,7 @@ def _sentence_for_side(
             except (TypeError, ValueError):
                 size_str = None
             if size_str:
-                desc = f"{desc}{_measure_clause(desc, size_str, f.organ)}" if desc else f"mide {size_str}"
+                desc = f"{desc}{measure_engine.measure_clause(desc, size_str, f.organ)}" if desc else f"mide {size_str}"
         if desc:
             parts.append(desc)
 
@@ -782,7 +783,7 @@ def _describe_unmatched_finding(f: Finding) -> str:
         except (TypeError, ValueError):
             size_str = None
         if size_str:
-            desc = f"{desc}{_measure_clause(desc, size_str, f.organ)}" if desc else f"mide {size_str}"
+            desc = f"{desc}{measure_engine.measure_clause(desc, size_str, f.organ)}" if desc else f"mide {size_str}"
     return desc
 
 
