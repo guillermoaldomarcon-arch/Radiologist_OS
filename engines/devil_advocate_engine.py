@@ -98,7 +98,7 @@ def check_missing_measurement(findings: List[Finding]) -> List[DevilQuestion]:
             label = f"{f.name}: {desc}" if (desc and not name_in_desc) else (desc or f.name)
             out.append(DevilQuestion(
                 finding=f,
-                question=f"Mencionaste '{label}' sin medida. ¿Tenés la dimensión?",
+                question=f"Mencionaste '{label}' sin medida. {_ask_measure(f.description)}",
                 reason="Finding ACTIVE sin size_mm.",
                 rule_type="B",
             ))
@@ -386,7 +386,39 @@ def _lower_first(text: str) -> str:
         return text[0].lower() + text[1:]
     return text
 
+_WALL_WORDS = {"pared", "paredes", "parietal", "parietales", "mural", "murales"}
+_HOLLOW_WORDS = {
+    "apendice", "vesicula", "biliar", "coledoco", "estomago", "esofago",
+    "duodeno", "yeyuno", "ileon", "intestino", "colon", "recto", "sigma",
+    "vejiga", "ureter", "uretra", "aorta", "arteria", "vena",
+}
 
+
+def _plain_words(text: Optional[str]) -> list:
+    plain = (text or "").lower().translate(str.maketrans("áéíóú", "aeiou"))
+    return re.findall(r"[a-zñ]+", plain)
+
+
+def _measure_clause(text: str, size_str: str, organ: Optional[str] = None) -> str:
+    """
+    ", que mide X" / ", que miden X". Si el hallazgo habla de la pared (pared,
+    paredes, parietal, mural) agrega "de espesor", y "de espesor parietal" cuando
+    el órgano es hueco. Si el texto ya dice "espesor", no lo repite.
+    """
+    words = _plain_words(text)
+    plural = "paredes" in words or (bool(words) and words[0] in _MIDE_PLURAL_HEADS)
+    verb = "miden" if plural else "mide"
+    suffix = ""
+    if any(w in _WALL_WORDS for w in words) and "espesor" not in words:
+        hollow = any(w in _HOLLOW_WORDS for w in _plain_words(organ))
+        suffix = " de espesor parietal" if hollow else " de espesor"
+    return f", que {verb} {size_str}{suffix}"
+
+
+def _ask_measure(text: Optional[str]) -> str:
+    if any(w in _WALL_WORDS for w in _plain_words(text)):
+        return "¿Cuánto mide el espesor de la pared?"
+    return "¿Tenés la dimensión?"
 _SIDE_LABELS = {
     "derecho": "derecho", "derecha": "derecho", "der": "derecho",
     "izquierdo": "izquierdo", "izquierda": "izquierdo", "izq": "izquierdo",
@@ -438,7 +470,7 @@ def _describe_finding_for_impression(f: Finding) -> str:
         except (TypeError, ValueError):
             size_str = None
         if size_str:
-            text = f"{text}{_mide_clause(text, size_str)}" if text else f"mide {size_str}"
+            text = f"{text}{_measure_clause(text, size_str, f.organ)}" if text else f"mide {size_str}"
 
     if not text:
         return ""
