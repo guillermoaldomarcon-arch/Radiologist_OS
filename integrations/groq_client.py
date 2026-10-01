@@ -30,6 +30,7 @@ Usage from voice_engine:
 """
 
 import os
+import re
 
 import httpx
 
@@ -38,24 +39,34 @@ _MODEL = "whisper-large-v3"
 _LANGUAGE = "es"
 _TIMEOUT = 60.0
 
-# Vocabulario de dominio para sesgar el reconocimiento de Whisper hacia
-# terminologia radiologica/anatomica en espanol -- reduce (no elimina)
-# confusiones por parecido sonoro con palabras de uso comun (ej: "bazo"
-# transcripto como "vaso", visto en produccion). Whisper usa este texto
-# como contexto de estilo/vocabulario, no como instruccion literal.
-# Ir sumando terminos aca a medida que aparezcan nuevos errores reales
-# en el uso diario -- no intentar anticiparlos todos de una.
+# Texto de contexto para Whisper. Whisper NO lo toma como instruccion: lo
+# usa como "lo que se venia diciendo", asi que funciona mejor cuando se
+# parece a un dictado real (frases cortas, con tildes, medidas en "mm") que
+# cuando es una lista suelta de palabras. Las confusiones b/v (ej: "bazo" ->
+# "vaso") se resuelven por contexto, por eso "bazo" aparece dentro de
+# frases, y "vaso" tambien (como vaso sanguineo) para no sobrecorregirlo.
+# Reglas para editarlo:
+#  - Mantener las tildes y las medidas como "120 mm" (si se escribe
+#    "milimetros", Whisper tiende a transcribir asi y se rompe el parser).
+#  - No copiar frases normales de la plantilla ("higado de tamano normal"):
+#    si un dictado real coincide con el prompt, el filtro de eco de abajo
+#    lo podria descartar por error.
+#  - Whisper solo usa los ultimos ~224 tokens: no alargarlo.
 _MEDICAL_VOCABULARY_PROMPT = (
-    "Dictado radiologico en espanol. Organos y estructuras frecuentes: "
-    "higado, bazo, rinon, rinones, vesicula biliar, pancreas, aorta "
-    "abdominal, vena cava inferior, prostata, utero, ovario, ovarios, "
-    "testiculo, tiroides, mama, pulmon, pleura, apendice, colon, recto, "
-    "vejiga, ureter, glandula suprarrenal, ganglio, ganglios. "
-    "Terminos descriptivos frecuentes: ecogenicidad, ecoestructura, "
-    "hipodenso, hiperecoico, hipoecoico, isquemico, parenquima, "
-    "corticomedular, litiasis, quiste, nodulo, masa expansiva, "
-    "adenopatia, dilatacion."
+    "Informe de ecografía abdominal dictado en español rioplatense. "
+    "Bazo aumentado de tamaño, esplenomegalia, mide 120 mm. "
+    "Vaso sanguíneo de calibre normal, pared del vaso engrosada. "
+    "Apéndice cecal con engrosamiento de las paredes, mide 11 mm. "
+    "Riñón derecho, riñón izquierdo, glándulas suprarrenales, vesícula "
+    "biliar, páncreas, aorta abdominal, vena cava inferior, próstata, "
+    "vejiga, útero, ovarios, testículos, tiroides, mama, pulmón, pleura, "
+    "colon, recto, ganglios, adenopatías, litiasis, quiste, nódulo "
+    "hipoecoico, masa expansiva, ecogenicidad, parénquima, corticomedular."
 )
+
+# Si lo transcripto es una secuencia de al menos esta cantidad de palabras
+# copiada tal cual del prompt, se trata como eco del prompt (no como dictado).
+_PROMPT_ECHO_MIN_WORDS = 8
 
 
 class GroqClientError(Exception):
@@ -68,6 +79,23 @@ class GroqClientError(Exception):
     text that reads as an empty dictation.
     """
     pass
+
+
+def _normalize_for_echo_check(text: str) -> str:
+    plain = text.lower().translate(str.maketrans("áéíóúü", "aeiouu"))
+    return " ".join(re.findall(r"[a-zñ0-9]+", plain))
+
+
+def _looks_like_prompt_echo(text: str) -> bool:
+    """
+    Con silencio o audio muy corto, Whisper a veces devuelve el texto del
+    prompt como si fuera lo dictado. En un informe medico eso metería
+    terminos que nadie dijo, asi que se descarta y se pide repetir.
+    """
+    normalized = _normalize_for_echo_check(text)
+    if len(normalized.split()) < _PROMPT_ECHO_MIN_WORDS:
+        return False
+    return normalized in _normalize_for_echo_check(_MEDICAL_VOCABULARY_PROMPT)
 
 
 def transcribe_audio(audio_bytes: bytes, filename: str = "audio.webm") -> str:
@@ -114,6 +142,12 @@ def transcribe_audio(audio_bytes: bytes, filename: str = "audio.webm") -> str:
         raise GroqClientError(
             "Groq API returned an empty transcription (silence, or audio "
             "too short/corrupt)."
+        )
+
+    if _looks_like_prompt_echo(text):
+        raise GroqClientError(
+            "No se detecto voz clara en el audio (la transcripcion repetia el "
+            "texto de contexto). Volve a grabar."
         )
 
     return text
