@@ -6,8 +6,8 @@ estaba duplicada en line_based_report_engine.py y devil_advocate_engine.py;
 ahora los dos la importan de acá, así un cambio se hace una sola vez.
 
 Reglas (definidas por Guille):
-- Siempre "que mide X" / "que miden X" (plural si el texto habla de "las
-  paredes" o arranca con un sustantivo plural: quistes, nódulos, masas...).
+- La medida se agrega como ", midiendo X" (gerundio: no cambia en plural,
+  así que sirve igual para "la pared" y "las paredes").
 - Hallazgo sobre la PARED (pared, paredes, parietal, mural): se dice el
   espesor. Órgano hueco -> "de espesor parietal"; vasos (arteria, aorta,
   vena) -> "de espesor mural"; otro -> "de espesor".
@@ -17,12 +17,6 @@ Reglas (definidas por Guille):
 
 import re
 from typing import Optional
-
-PLURAL_HEADS = {
-    "masas", "quistes", "nodulos", "polipos", "calculos", "abscesos", "tumores",
-    "imagenes", "litos", "placas", "diverticulos", "ganglios", "hematomas",
-    "lesiones", "calcificaciones", "adenopatias", "pliegues",
-}
 
 WALL_WORDS = {"pared", "paredes", "parietal", "parietales", "mural", "murales"}
 
@@ -55,9 +49,6 @@ def measure_clause(text: str, size_str: str, organ: Optional[str] = None) -> str
     words = plain_words(text)
     organ_words = plain_words(organ)
 
-    plural = "paredes" in words or (bool(words) and words[0] in PLURAL_HEADS)
-    verb = "miden" if plural else "mide"
-
     suffix = ""
     if any(w in WALL_WORDS for w in words):
         if "espesor" not in words:
@@ -73,7 +64,7 @@ def measure_clause(text: str, size_str: str, organ: Optional[str] = None) -> str
                 suffix = f" de {term}"
                 break
 
-    return f", que {verb} {size_str}{suffix}"
+    return f", midiendo {size_str}{suffix}"
 
 
 def ask_measure(text: Optional[str]) -> str:
