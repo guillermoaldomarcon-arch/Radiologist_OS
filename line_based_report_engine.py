@@ -168,7 +168,7 @@ def _sentence_for_side(
             except (TypeError, ValueError):
                 size_str = None
             if size_str:
-                desc = f"{desc}, mide {size_str}" if desc else f"mide {size_str}"
+                desc = f"{desc}{_mide_clause(desc, size_str)}" if desc else f"mide {size_str}"
         if desc:
             parts.append(desc)
 
@@ -182,6 +182,20 @@ def _sentence_for_side(
     if organ_name:
         return _subject_sentence(organ_name, None, body)
     return _capitalize_first(body) + "."
+_MIDE_PLURAL_HEADS = {
+    "masas", "quistes", "nodulos", "polipos", "calculos", "abscesos", "tumores",
+    "imagenes", "litos", "placas", "diverticulos", "ganglios", "hematomas",
+    "lesiones", "calcificaciones", "adenopatias", "pliegues",
+}
+
+
+def _mide_clause(text: str, size_str: str) -> str:
+    """", que mide X" / ", que miden X" según el texto hable de 'paredes' u otro plural."""
+    plain = text.lower().translate(str.maketrans("áéíóú", "aeiou"))
+    words = re.findall(r"[a-zñ]+", plain)
+    plural = "paredes" in words or (bool(words) and words[0] in _MIDE_PLURAL_HEADS)
+    return f", que miden {size_str}" if plural else f", que mide {size_str}"
+    text = f"{text}{_mide_clause(text, size_str)}" if text else f"mide {size_str}"
 _LINK_VERB_NOUNS = {
     "masa", "masas", "quiste", "quistes", "nodulo", "nodulos", "polipo", "polipos",
     "calculo", "calculos", "absceso", "abscesos", "tumor", "tumores", "imagen",
@@ -736,7 +750,7 @@ def _describe_unmatched_finding(f: Finding) -> str:
         except (TypeError, ValueError):
             size_str = None
         if size_str:
-            desc = f"{desc}, mide {size_str}" if desc else f"mide {size_str}"
+            desc = f"{desc}{_mide_clause(desc, size_str)}" if desc else f"mide {size_str}"
     return desc
 
 
