@@ -10,6 +10,7 @@ import re
 from typing import Callable, List, Optional
 
 from finding import Finding
+import measure_engine
 
 _ACCENT_MAP = str.maketrans("áéíóúÁÉÍÓÚ", "aeiouAEIOU")
 
@@ -98,7 +99,7 @@ def check_missing_measurement(findings: List[Finding]) -> List[DevilQuestion]:
             label = f"{f.name}: {desc}" if (desc and not name_in_desc) else (desc or f.name)
             out.append(DevilQuestion(
                 finding=f,
-                question=f"Mencionaste '{label}' sin medida. {_ask_measure(f.description)}",
+                question=f"Mencionaste '{label}' sin medida. {measure_engine.ask_measure(f.description)}",
                 reason="Finding ACTIVE sin size_mm.",
                 rule_type="B",
             ))
@@ -470,7 +471,7 @@ def _describe_finding_for_impression(f: Finding) -> str:
         except (TypeError, ValueError):
             size_str = None
         if size_str:
-            text = f"{text}{_measure_clause(text, size_str, f.organ)}" if text else f"mide {size_str}"
+            text = f"{text}{measure_engine.measure_clause(text, size_str, f.organ)}" if text else f"mide {size_str}"
 
     if not text:
         return ""
