@@ -332,6 +332,59 @@ def classify_with_answers(organ: str, description: str, answers: dict) -> Option
     if result and contains_management_language(result):
         result = strip_to_classification_only(result)
     return result
+_MIDE_PLURAL_HEADS = {
+    "masas", "quistes", "nodulos", "polipos", "calculos", "abscesos", "tumores",
+    "imagenes", "litos", "placas", "diverticulos", "ganglios", "hematomas",
+    "lesiones", "calcificaciones", "adenopatias", "pliegues",
+}
+
+
+def _mide_clause(text: str, size_str: str) -> str:
+    """", que mide X" / ", que miden X" según el texto hable de 'paredes' u otro plural."""
+    plain = text.lower().translate(str.maketrans("áéíóú", "aeiou"))
+    words = re.findall(r"[a-zñ]+", plain)
+    plural = "paredes" in words or (bool(words) and words[0] in _MIDE_PLURAL_HEADS)
+    return f", que miden {size_str}" if plural else f", que mide {size_str}"
+
+
+_LINK_VERB_NOUNS = {
+    "masa", "masas", "quiste", "quistes", "nodulo", "nodulos", "polipo", "polipos",
+    "calculo", "calculos", "absceso", "abscesos", "tumor", "tumores", "imagen",
+    "imagenes", "liquido", "barro", "lito", "litos", "trombo", "placa", "placas",
+    "diverticulo", "diverticulos", "ganglio", "ganglios", "aneurisma", "edema",
+    "hematoma", "hematomas", "aumento", "aumentos",
+}
+_LINK_VERB_SUFFIXES = (
+    "cion", "ciones", "sion", "siones", "miento", "mientos", "dad", "dades",
+    "ia", "itis", "osis", "iasis", "oma", "omas",
+)
+
+
+def _link_verb(text: str, organ: Optional[str], organ_present: bool) -> str:
+    """
+    " presenta" / " presentan" cuando hay que anteponer el órgano y el hallazgo
+    arranca con un sustantivo ("Riñón derecho masa sólida" queda telegráfico).
+    Vacío con participios, adjetivos o preposiciones ("disminuido de tamaño",
+    "con masa..."), donde agregar el verbo sonaría mal.
+    """
+    if not organ or organ_present:
+        return ""
+    plain = text.strip().lower().translate(str.maketrans("áéíóú", "aeiou"))
+    first = plain.split(" ")[0].strip(",.;:") if plain else ""
+    if not first:
+        return ""
+    if first not in _LINK_VERB_NOUNS and not first.endswith(_LINK_VERB_SUFFIXES):
+        return ""
+    organ_words = organ.strip().lower().translate(str.maketrans("áéíóú", "aeiou")).split()
+    last = organ_words[-1] if organ_words else ""
+    plural = last.endswith(("es", "os", "as")) and last not in ("pancreas", "tiroides")
+    return " presentan" if plural else " presenta"
+
+
+def _lower_first(text: str) -> str:
+    if len(text) > 1 and text[0].isupper() and not text[1].isupper():
+        return text[0].lower() + text[1:]
+    return text
 
 
 _SIDE_LABELS = {
@@ -375,7 +428,7 @@ def _describe_finding_for_impression(f: Finding) -> str:
 
     if subject_parts:
         subject = " ".join(subject_parts)
-        text = f"{subject} {desc}".strip() if desc else subject
+        text = f"{subject}{_link_verb(desc, organ, organ_present)} {_lower_first(desc)}".strip() if desc else subject
     else:
         text = desc
 
@@ -385,7 +438,7 @@ def _describe_finding_for_impression(f: Finding) -> str:
         except (TypeError, ValueError):
             size_str = None
         if size_str:
-            text = f"{text}, mide {size_str}" if text else f"mide {size_str}"
+            text = f"{text}{_mide_clause(text, size_str)}" if text else f"mide {size_str}"
 
     if not text:
         return ""
