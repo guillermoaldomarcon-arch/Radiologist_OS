@@ -32,7 +32,7 @@ function DevilQuestionCard({
   const anchor = question.finding_description || question.finding_name;
 
   const answerWithContext = (value: string): boolean => {
-  if (question.rule_type === "B") {
+  if (question.rule_type === "G") { onAnswer(anchor ? `[LATERALIDAD_CONFIRMADA: ${anchor} = ${value}]` : value); return true; } if (question.rule_type === "B") {
     const mm = parseMeasurementToMm(value);
     if (mm === null) {
       setInputError("Ingresá solo la medida, ej. 11 mm o 1,1 cm");
