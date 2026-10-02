@@ -163,7 +163,7 @@ Para CADA hallazgo distinto (patológico O explícitamente normal) en el dictado
   "size_mm": number or null,
   "description": string,
   "is_pathological": boolean,
-  "confirmed_line_id": string or null
+  "confirmed_line_id": string or null, "paired": boolean or null
 }}
 
 Reglas estrictas:
@@ -173,6 +173,8 @@ Reglas estrictas:
 - Regla especial para marcadores [MEDIDA_CONFIRMADA: <descripción> = <valor> mm]: si el dictado contiene una línea con ese formato exacto, es una instrucción literal del radiólogo, NO un hallazgo nuevo. Buscá, entre los hallazgos que ya identificaste en el resto del dictado, aquel cuya descripción coincida (razonablemente, no necesariamente palabra por palabra) con el texto entre "MEDIDA_CONFIRMADA:" y "=", y asignale ese "size_mm" a ESE hallazgo específico. NUNCA se lo asignes a otro hallazgo distinto, aunque esté más cerca en el texto. Si no encontrás ningún hallazgo cuya descripción coincida razonablemente, ignorá el marcador (no inventes un hallazgo nuevo solo por el marcador). El marcador en sí NUNCA debe aparecer como un hallazgo propio en tu respuesta.
 - Regla especial para marcadores [UBICACION_CONFIRMADA: <descripción> = <line_id>]: igual tratamiento que MEDIDA_CONFIRMADA -- es una instrucción literal del radiólogo, NO un hallazgo nuevo. Buscá, entre los hallazgos que ya identificaste, aquel cuya descripción coincida razonablemente con el texto entre "UBICACION_CONFIRMADA:" y "=", y asignale ese valor al campo "confirmed_line_id" de ESE hallazgo específico. Nunca se lo asignes a otro hallazgo distinto. Si no encontrás coincidencia razonable, ignorá el marcador. El marcador en sí nunca debe aparecer como hallazgo propio.
 - El valor de line_id dentro de un marcador [UBICACION_CONFIRMADA: ... = <line_id>] es un identificador interno de ubicación, NUNCA una pista clínica. Aunque ese valor coincida textualmente con el nombre de un órgano (ej. "higado"), NO debe influir en el campo "organ" de ningún hallazgo -- el "organ" de cada hallazgo se determina únicamente por lo que el hallazgo mismo describe clínicamente, nunca por el line_id al que se lo está asignando.
+- Campo "paired": true si la estructura anatómica del hallazgo existe a ambos lados del cuerpo (riñón, glándula suprarrenal, ovario, testículo, mama, pezón, axila, pulmón, mano, brazo, hombro, rodilla, etc.), false si es única o de línea media (hígado, bazo, páncreas, vejiga, próstata, útero, aorta), null si no estás seguro. Se decide con conocimiento anatómico, no por lo que diga el dictado.
+- Regla especial para marcadores [LATERALIDAD_CONFIRMADA: <descripción> = derecho|izquierdo|bilateral]: igual tratamiento que MEDIDA_CONFIRMADA -- es una instrucción literal del radiólogo, NO un hallazgo nuevo. Buscá, entre los hallazgos que ya identificaste, aquel cuya descripción coincida razonablemente con el texto entre "LATERALIDAD_CONFIRMADA:" y "=", y asignale ese valor al campo "side" de ESE hallazgo específico. Nunca se lo asignes a otro hallazgo distinto. Si no encontrás coincidencia razonable, ignorá el marcador. El marcador en sí nunca debe aparecer como hallazgo propio.
 - Respondé ÚNICAMENTE con un array JSON, sin texto adicional, sin markdown.
 
 Dictado:
@@ -273,7 +275,7 @@ def ai_findings_to_objects(
                 description=raw.get("description", ""),
                 certainty=certainty,
                 status=status,
-                confirmed_line_id=raw.get("confirmed_line_id"),
+                confirmed_line_id=raw.get("confirmed_line_id"), paired=(raw.get("paired") if isinstance(raw.get("paired"), bool) else None),
             )
         )
 
