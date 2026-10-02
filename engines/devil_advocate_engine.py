@@ -468,7 +468,7 @@ def _describe_finding_for_impression(f: Finding) -> str:
     riñon no, porque su description es solo un adjetivo suelto
     ("disminuido de tamaño...") sin sujeto propio.
     """
-    desc = measure_engine.strip_trailing_measure((f.description or f.name or "").strip().rstrip("."), f.size_mm)
+    desc = measure_engine.prepare_description((f.description or f.name or "").strip().rstrip("."), f.size_mm)
     organ = f.organ.strip() if f.organ else None
     side_label = _SIDE_LABELS.get((f.side or "").strip().lower())
 
@@ -483,11 +483,11 @@ def _describe_finding_for_impression(f: Finding) -> str:
     if organ and not organ_present:
         subject_parts.append(organ)
     if side_label and not side_present:
-        subject_parts.append(side_label)
+        subject_parts.append(measure_engine.agree_side(organ, side_label))
 
     if subject_parts:
         subject = " ".join(subject_parts)
-        text = f"{subject}{_link_verb(desc, organ, organ_present)} {_lower_first(desc)}".strip() if desc else subject
+        text = f"{subject}{measure_engine.link_verb(desc, organ, organ_present)} {_lower_first(desc)}".strip() if desc else subject
     else:
         text = desc
 
@@ -497,7 +497,7 @@ def _describe_finding_for_impression(f: Finding) -> str:
         except (TypeError, ValueError):
             size_str = None
         if size_str:
-            text = f"{text}{measure_engine.measure_clause(text, size_str, f.organ)}" if text else f"mide {size_str}"
+            text = f"{text}{measure_engine.measure_clause(desc, size_str, f.organ)}" if text else f"mide {size_str}"
 
     if not text:
         return ""
