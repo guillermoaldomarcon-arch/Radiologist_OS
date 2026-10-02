@@ -194,7 +194,7 @@ def _sentence_for_side(
 
     parts = []
     for f in findings:
-        desc = measure_engine.strip_trailing_measure((f.description or f.name or "").strip().rstrip("."), f.size_mm)
+        desc = measure_engine.prepare_description((f.description or f.name or "").strip().rstrip("."), f.size_mm)
         if f.size_mm is not None and not _MM_IN_TEXT_PATTERN.search(desc):
             try:
                 size_str = f"{float(f.size_mm):g} mm"
@@ -281,7 +281,7 @@ def _subject_sentence(organ_name: Optional[str], side_label: Optional[str], body
     """
     body_norm = body.lower().translate(_ACCENTS)
     organ_norm = (organ_name or "").lower().translate(_ACCENTS)
-    organ_present = bool(organ_norm) and organ_norm in body_norm
+    organ_present = measure_engine.organ_in_text(organ_name, body)
     side_present = bool(side_label) and side_label.rstrip("o") in body_norm
 
     if organ_present and side_label and not side_present:
@@ -291,13 +291,13 @@ def _subject_sentence(organ_name: Optional[str], side_label: Optional[str], body
     if organ_name and not organ_present:
         parts.append(_capitalize_first(organ_name))
     if side_label and not side_present:
-        parts.append(side_label)
+        parts.append(measure_engine.agree_side(organ_name, side_label))
     if not parts:
         return _capitalize_first(body) + "."
 
     if len(body) > 1 and body[0].isupper() and not body[1].isupper():
         body = body[0].lower() + body[1:]
-    return f"{' '.join(parts)}{_link_verb(body, organ_name, organ_present)} {body}."
+    return f"{' '.join(parts)}{measure_engine.link_verb(body, organ_name, organ_present)} {body}."
 
 
 def _compose_bilateral_line(
@@ -776,7 +776,7 @@ def _describe_unmatched_finding(f: Finding) -> str:
     medida confirmada (size_mm) si esa medida no esta ya escrita en la
     descripcion. Mismo criterio que _sentence_for_side.
     """
-    desc = measure_engine.strip_trailing_measure((f.description or f.name or "").strip().rstrip("."), f.size_mm)
+    desc = measure_engine.prepare_description((f.description or f.name or "").strip().rstrip("."), f.size_mm)
     if f.size_mm is not None and not _ANY_MEASUREMENT_PATTERN.search(desc):
         try:
             size_str = f"{float(f.size_mm):g} mm"
