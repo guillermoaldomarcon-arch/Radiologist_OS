@@ -89,6 +89,32 @@ def _short(text: Optional[str], limit: int = 60) -> str:
     cut = text[:limit].rsplit(" ", 1)[0] or text[:limit]
     return cut.rstrip(",.;:") + "…"
 
+_SIDE_WORD_RE = re.compile(r"\b(derech[oa]s?|izquierd[oa]s?|bilateral(?:es)?|ambos|ambas)\b")
+
+
+def check_missing_laterality(findings: List[Finding]) -> List[DevilQuestion]:
+    """
+    Regla G: estructura par (el extractor marca paired=True) sin lado
+    informado ni mencionado en el texto. La respuesta vuelve como
+    [LATERALIDAD_CONFIRMADA: ...] y completa el hallazgo existente.
+    """
+    out = []
+    for f in findings:
+        if f.status != "ACTIVE" or not getattr(f, "paired", None) or f.side:
+            continue
+        text = _strip_accents(f"{f.description or ''} {f.location or ''}".lower())
+        if _SIDE_WORD_RE.search(text):
+            continue
+        label = _short(f.description) or f.name
+        out.append(DevilQuestion(
+            finding=f,
+            question=f"¿De qué lado está '{label}'?",
+            reason="Estructura par sin lateralidad.",
+            rule_type="G",
+            closure_candidates={"derecho": "derecho", "izquierdo": "izquierdo", "bilateral": "bilateral"},
+        ))
+    return out
+
 
 def check_missing_measurement(findings: List[Finding]) -> List[DevilQuestion]:
     out = []
@@ -442,7 +468,7 @@ def _describe_finding_for_impression(f: Finding) -> str:
     riñon no, porque su description es solo un adjetivo suelto
     ("disminuido de tamaño...") sin sujeto propio.
     """
-    desc = (f.description or f.name or "").strip().rstrip(".")
+    desc = measure_engine.strip_trailing_measure((f.description or f.name or "").strip().rstrip("."), f.size_mm)
     organ = f.organ.strip() if f.organ else None
     side_label = _SIDE_LABELS.get((f.side or "").strip().lower())
 
@@ -543,7 +569,7 @@ def review(
     findings: List[Finding], modality: str, quality_issues: Optional[list] = None
 ) -> List[DevilQuestion]:
     questions = []
-    questions += check_missing_measurement(findings)
+    questions += check_missing_laterality(findings); questions += check_missing_measurement(findings)
     questions += check_terminology(findings, modality)
     questions += check_classification_gap(findings)
     f_question = suggest_impression_level(findings, quality_issues)
