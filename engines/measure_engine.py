@@ -13,6 +13,9 @@ Reglas (definidas por Guille):
   vena) -> "de espesor mural"; otro -> "de espesor".
 - Apéndice engrosado o aumentado de tamaño (el órgano, no su pared): se mide
   el diámetro transverso.
+- Si el dictado ya trae la medida pegada al final de la descripción
+  ("...apéndice cecal con 11 mm"), se la saca de ahí y se vuelve a redactar
+  con las reglas de arriba (strip_trailing_measure).
 """
 
 import re
@@ -38,10 +41,43 @@ DIAMETER_TRIGGERS = {
     "aumento", "dilatado", "dilatada", "dilatacion",
 }
 
+# Medida pegada al FINAL de la descripción, con un conector simple:
+# "... cecal con 11 mm", "... de 11 mm", "..., 11 mm", "..., midiendo 11 mm".
+# No matchea "de aproximadamente 11 mm", "de hasta 11 mm" ni "90 x 120 x 150 mm":
+# en esos casos se deja el texto tal cual para no perder información.
+_TRAILING_MEASURE_RE = re.compile(
+    r"(?:[,;]\s*(?:(?:con|de|midiendo|que\s+mide|que\s+miden|mide|miden)\s+)?"
+    r"|\s+(?:con|de|midiendo|que\s+mide|que\s+miden|mide|miden)\s+)"
+    r"(\d+(?:[.,]\d+)?)\s*(mm|cm)\s*$",
+    re.IGNORECASE,
+)
+
 
 def plain_words(text: Optional[str]) -> list:
     plain = (text or "").lower().translate(str.maketrans("áéíóú", "aeiou"))
     return re.findall(r"[a-zñ]+", plain)
+
+
+def strip_trailing_measure(text: str, size_mm) -> str:
+    """
+    Si la descripción termina con una medida igual a size_mm, la saca para que
+    measure_clause la vuelva a redactar ("de espesor", "midiendo"...). Solo
+    actúa si el número coincide con size_mm; si no, devuelve el texto igual.
+    """
+    if not text or size_mm is None:
+        return text
+    match = _TRAILING_MEASURE_RE.search(text)
+    if not match:
+        return text
+    try:
+        value = float(match.group(1).replace(",", "."))
+        if match.group(2).lower() == "cm":
+            value *= 10.0
+        if abs(value - float(size_mm)) > 0.05:
+            return text
+    except (TypeError, ValueError):
+        return text
+    return text[: match.start()].rstrip(" ,;")
 
 
 def measure_clause(text: str, size_str: str, organ: Optional[str] = None) -> str:
