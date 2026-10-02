@@ -248,7 +248,7 @@ def create_report(req: ReportRequest):
     quality_engine.apply_flags(quality_issues)
     releasable = (
         not any(f.status == "FLAGGED" for f in findings)
-        and not report_dict["unmatched_findings"]
+        and not report_dict["unmatched_findings"] and not any(q.rule_type == "G" for q in devil_questions_raw)
     )
 
     followup_results_out: list[FollowupResultOut] = []
