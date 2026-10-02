@@ -194,7 +194,7 @@ def _sentence_for_side(
 
     parts = []
     for f in findings:
-        desc = (f.description or f.name or "").strip().rstrip(".")
+        desc = measure_engine.strip_trailing_measure((f.description or f.name or "").strip().rstrip("."), f.size_mm)
         if f.size_mm is not None and not _MM_IN_TEXT_PATTERN.search(desc):
             try:
                 size_str = f"{float(f.size_mm):g} mm"
@@ -776,7 +776,7 @@ def _describe_unmatched_finding(f: Finding) -> str:
     medida confirmada (size_mm) si esa medida no esta ya escrita en la
     descripcion. Mismo criterio que _sentence_for_side.
     """
-    desc = (f.description or f.name or "").strip().rstrip(".")
+    desc = measure_engine.strip_trailing_measure((f.description or f.name or "").strip().rstrip("."), f.size_mm)
     if f.size_mm is not None and not _ANY_MEASUREMENT_PATTERN.search(desc):
         try:
             size_str = f"{float(f.size_mm):g} mm"
