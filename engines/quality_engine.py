@@ -124,7 +124,7 @@ def _check_organ_not_in_template(
 
     Does NOT run for findings with no organ at all (nothing to check).
     """
-    if not finding.organ:
+    if not finding.organ or getattr(finding, "confirmed_line_id", None) == "otros_hallazgos":
         return None
 
     organ_norm = _strip_accents(finding.organ.lower().strip())
