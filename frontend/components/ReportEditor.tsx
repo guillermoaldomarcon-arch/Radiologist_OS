@@ -5,8 +5,16 @@ import { useReportStore } from "@/stores/reportStore";
 import { AlertTriangle, Check, Copy, Loader2, ShieldAlert } from "lucide-react";
 
 export default function ReportEditor() {
-  const { currentReport, reportDraftText, setReportDraftText, isLoading, error, appendDevilAdvocateAnswer } =
-    useReportStore();
+  const {
+    currentReport,
+    reportDraftText,
+    setReportDraftText,
+    isLoading,
+    error,
+    dictationText,
+    setDictationText,
+    generateReport,
+  } = useReportStore();
   const [copied, setCopied] = useState(false);
   const [showQualityDetail, setShowQualityDetail] = useState(false);
 
@@ -16,6 +24,28 @@ export default function ReportEditor() {
   useEffect(() => {
     if (currentReport) setCopied(false);
   }, [currentReport]);
+
+  // Mantener: el hallazgo pasa a "Otros hallazgos" en un solo paso. Se marca
+  // en el dictado con el prefijo "Hallazgo adicional:" (visible, queda
+  // registrado y se puede decir por voz) y se regenera el informe.
+  const keepAsExtra = async (finding: string) => {
+    const text = finding.trim();
+    if (!text) return;
+    const current = dictationText;
+    const idx = current.toLowerCase().indexOf(text.toLowerCase());
+    const alreadyMarked =
+      idx >= 0 && /(hallazgo adicional|otro hallazgo)\s*[:\-–]?\s*$/i.test(current.slice(0, idx));
+    let updated: string;
+    if (alreadyMarked) {
+      updated = current;
+    } else if (idx >= 0) {
+      updated = `${current.slice(0, idx)}Hallazgo adicional: ${current.slice(idx)}`;
+    } else {
+      updated = `${current}\nHallazgo adicional: ${text}`;
+    }
+    setDictationText(updated);
+    await generateReport();
+  };
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(reportDraftText);
@@ -99,21 +129,29 @@ export default function ReportEditor() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="flex-1 min-h-0 flex flex-col gap-3 p-4">
         <textarea
           value={reportDraftText}
           onChange={(e) => setReportDraftText(e.target.value)}
-          className="w-full h-full min-h-[280px] resize-none bg-zinc-800/50 text-zinc-100 text-sm leading-relaxed p-3 rounded-md border border-zinc-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="w-full flex-1 min-h-[160px] resize-none bg-zinc-800/50 text-zinc-100 text-sm leading-relaxed p-3 rounded-md border border-zinc-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
         />
 
         {unmatched_findings.length > 0 && (
-          <div className="mt-3 p-3 rounded-md bg-amber-500/10 border border-amber-500/20">
+          <div className="shrink-0 max-h-48 overflow-y-auto p-3 rounded-md bg-amber-500/10 border border-amber-500/20">
             <p className="text-xs font-medium text-amber-400 mb-1">
               Hallazgos que no tienen lugar en la plantilla. Tocá Mantener para dejarlos en Otros hallazgos y poder copiar el informe:
             </p>
             <ul className="text-sm text-amber-300/90 space-y-1">
               {unmatched_findings.map((finding, idx) => (
-                <li key={idx} className="flex items-center justify-between gap-3 py-1"><span>{finding}</span><button onClick={() => appendDevilAdvocateAnswer(`[UBICACION_CONFIRMADA: ${finding} = otros_hallazgos]`)} className="shrink-0 min-h-[44px] px-4 rounded-md bg-amber-500/20 text-amber-200 text-sm font-medium hover:bg-amber-500/30">Mantener</button></li>
+                <li key={idx} className="flex items-center justify-between gap-3 py-1">
+                  <span>{finding}</span>
+                  <button
+                    onClick={() => keepAsExtra(finding)}
+                    className="shrink-0 min-h-[44px] px-4 rounded-md bg-amber-500/20 text-amber-200 text-sm font-medium hover:bg-amber-500/30"
+                  >
+                    Mantener
+                  </button>
+                </li>
               ))}
             </ul>
           </div>
