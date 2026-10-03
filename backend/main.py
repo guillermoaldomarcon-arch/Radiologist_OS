@@ -226,7 +226,7 @@ def create_report(req: ReportRequest):
             organ_hints=template["expected_organs_or_regions"],
         )
         report_dict = build_line_based_report(template, findings, call_claude)
-    except ClaudeClientError as e:
+    except (ClaudeClientError, ValueError) as e:
         raise HTTPException(status_code=502, detail=f"Error llamando a Claude: {e}")
 
     report_text = render_report_text(template, report_dict)
@@ -264,7 +264,7 @@ def create_report(req: ReportRequest):
                 original_text=req.previous_dictation_text,
                 call_claude=call_claude,
             )
-        except ClaudeClientError as e:
+        except (ClaudeClientError, ValueError) as e:
             raise HTTPException(
                 status_code=502,
                 detail=f"Error llamando a Claude (informe previo): {e}",
