@@ -717,7 +717,7 @@ def build_line_based_report(
     should not be delegated to a size/severity heuristic.
     """
     flat_lines = _build_lines_reference(template)
-    pathological_findings = [f for f in findings if f.status == "ACTIVE"]
+    extra_findings = [f for f in findings if f.status == "ACTIVE" and f.confirmed_line_id == "otros_hallazgos"]; pathological_findings = [f for f in findings if f.status == "ACTIVE" and f.confirmed_line_id != "otros_hallazgos"]
 
     mapping = _match_findings_to_lines(pathological_findings, flat_lines, call_claude)
     unmatched_indices = mapping.get("_unmatched", [])
@@ -760,7 +760,7 @@ def build_line_based_report(
             {"section_title": section["section_title"], "lines": section_lines}
         )
 
-    unmatched_findings = [pathological_findings[i] for i in unmatched_indices]
+    unmatched_findings = [pathological_findings[i] for i in unmatched_indices]; result_sections.extend([{"section_title": "OTROS HALLAZGOS", "lines": [_capitalize_first(_describe_unmatched_finding(f)) + "." for f in extra_findings]}] if extra_findings else [])
 
     return {
         "sections": result_sections,
