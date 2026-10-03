@@ -181,7 +181,7 @@ Reglas estrictas:
 Dictado:
 \"\"\"{dictation_text}\"\"\""""
 
-    raw_response = call_claude(prompt)
+    raw_response = _call_until_json(call_claude, prompt)
 
     try:
         cleaned = raw_response.strip()
@@ -190,10 +190,10 @@ Dictado:
             cleaned = cleaned.replace("json", "", 1).strip()
         data = json.loads(cleaned)
     except (json.JSONDecodeError, AttributeError):
-        return []
+        raise ValueError("El extractor devolvió una respuesta que no se pudo leer. Probá de nuevo.")
 
     if not isinstance(data, list):
-        return []
+        raise ValueError("El extractor devolvió una respuesta que no se pudo leer. Probá de nuevo.")
 
     return data
 
@@ -329,6 +329,88 @@ def _extract_with_rules_only(sentence: str, organ_hints: List[str]) -> Optional[
         certainty="HIGH" if (measurement_match or laterality_match) else "MODERATE",
         status="ACTIVE",
     )
+
+_EXTRA_ID = "otros_hallazgos"
+_EXTRA_MARKER_RE = re.compile(
+    r"\[UBICACION_CONFIRMADA:\s*(.+?)\s*=\s*otros_hallazgos\s*\]", re.IGNORECASE | re.DOTALL
+)
+_EXTRA_KEYWORD_RE = re.compile(
+    r"(?:hallazgo adicional|otro hallazgo)\s*[:\-–,]?\s*((?:[^.\n\[]|\.\d)+)", re.IGNORECASE
+)
+_EXTRA_PREFIX_RE = re.compile(
+    r"^\s*(?:hallazgo adicional|otro hallazgo)\s*[:\-–,]?\s*", re.IGNORECASE
+)
+
+
+def _call_until_json(call_claude, prompt, attempts=2):
+    """Llama a Claude y, si la respuesta no es una lista JSON válida, reintenta una vez."""
+    raw = ""
+    for _ in range(attempts):
+        raw = call_claude(prompt)
+        try:
+            cleaned = raw.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.strip("`").replace("json", "", 1).strip()
+            if isinstance(json.loads(cleaned), list):
+                return raw
+        except (json.JSONDecodeError, AttributeError):
+            continue
+    return raw
+
+
+def _word_set(text):
+    return {w for w in re.findall(r"[a-zñ0-9]+", _strip_accents((text or "").lower())) if len(w) > 2}
+
+
+def _similar(a, b):
+    wa, wb = _word_set(a), _word_set(b)
+    if not wa or not wb:
+        return False
+    return len(wa & wb) / min(len(wa), len(wb)) >= 0.6
+
+
+def _extra_descriptions(dictation_text):
+    """Textos que el médico dejó como 'hallazgo adicional' (marcador o frase), sin repetidos."""
+    found = [m.group(1).strip() for m in _EXTRA_MARKER_RE.finditer(dictation_text)]
+    found += [m.group(1).strip(" .") for m in _EXTRA_KEYWORD_RE.finditer(dictation_text)]
+    out = []
+    for text in found:
+        if text and not any(_similar(text, seen) for seen in out):
+            out.append(text)
+    return out
+
+
+def _ensure_extra_findings(findings, dictation_text):
+    """
+    Garantiza que cada hallazgo adicional pedido por el médico exista como
+    Finding con confirmed_line_id='otros_hallazgos', sin depender de que la IA
+    lo haya devuelto bien: si ya hay uno parecido se lo marca, y si no existe
+    se crea con el texto literal. Un hallazgo dictado nunca debe desaparecer.
+    """
+    for text in _extra_descriptions(dictation_text):
+        if any(f.confirmed_line_id == _EXTRA_ID and _similar(f.description or "", text) for f in findings):
+            continue
+        match = next(
+            (f for f in findings if f.confirmed_line_id != _EXTRA_ID and _similar(f.description or "", text)),
+            None,
+        )
+        if match is not None:
+            match.confirmed_line_id = _EXTRA_ID
+            match.status = "ACTIVE"
+            continue
+        size_match = _MEASUREMENT_PATTERN.search(text)
+        size_mm = None
+        if size_match:
+            size_mm = float(size_match.group(1).replace(",", "."))
+            if size_match.group(2).lower() == "cm":
+                size_mm *= 10.0
+        findings.append(Finding(
+            name=text, organ=None, description=text, size_mm=size_mm,
+            certainty="HIGH", status="ACTIVE", confirmed_line_id=_EXTRA_ID,
+        ))
+    for f in findings:
+        if f.confirmed_line_id == _EXTRA_ID and f.description:
+            f.description = _EXTRA_PREFIX_RE.sub("", f.description)
 
 
 def parse(
