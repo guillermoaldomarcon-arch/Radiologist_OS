@@ -73,7 +73,7 @@ function DevilQuestionCard({
             <button
               key={key}
               onClick={() => answerWithContext(String(value))}
-              className="text-xs px-2 py-1 rounded-md bg-blue-600/20 text-blue-300 hover:bg-blue-600/30"
+              className="text-sm px-3 py-2 min-h-[40px] rounded-md bg-blue-600/20 text-blue-300 hover:bg-blue-600/30"
             >
               {String(value)}
             </button>
