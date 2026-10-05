@@ -183,6 +183,25 @@ def prepare_description(text: str, size_mm) -> str:
     """Limpia la descripción antes de redactar: 'con' en los atributos y sin medida repetida."""
     return strip_trailing_measure(connect_attributes(text), size_mm)
 
+def with_side(text: str, side: Optional[str]) -> str:
+    """Agrega el lado al final si el texto no lo dice ya: '..., del lado derecho'."""
+    key = {
+        "derecho": "derecho", "derecha": "derecho",
+        "izquierdo": "izquierdo", "izquierda": "izquierdo", "bilateral": "bilateral",
+    }.get((side or "").strip().lower())
+    if not key or not text:
+        return text
+    if any(w.startswith(("derech", "izquierd", "bilateral", "ambos", "ambas")) for w in plain_words(text)):
+        return text
+    return f"{text}, bilateral" if key == "bilateral" else f"{text}, del lado {key}"
+
+
+def _starts_with_finding_noun(text: str) -> bool:
+    """¿La descripción arranca con el sustantivo del hallazgo (masa, nódulo, engrosamiento...)?"""
+    words = plain_words(text)
+    first = words[0] if words else ""
+    return bool(first) and (first in LINK_VERB_NOUNS or first.endswith(LINK_VERB_SUFFIXES))
+
 
 def measure_clause(text: str, size_str: str, organ: Optional[str] = None) -> str:
     """Cláusula de medida para agregar al final de la descripción de un hallazgo."""
@@ -205,7 +224,7 @@ def measure_clause(text: str, size_str: str, organ: Optional[str] = None) -> str
                 break
 
     # "Riñón derecho presenta masa renal que mide 40 mm": la medida es de la masa.
-    if link_verb(text, organ, organ_in_text(organ, text)):
+    if _starts_with_finding_noun(text):
         plural = "paredes" in words or (bool(words) and words[0] in PLURAL_HEADS)
         verb = "miden" if plural else "mide"
         return f" que {verb} {size_str}{suffix}"
