@@ -71,6 +71,7 @@ import re
 from typing import Callable, List, Optional
 
 from finding import Finding
+import marker_engine
 
 
 _MEASUREMENT_PATTERN = re.compile(
@@ -421,8 +422,8 @@ def parse(
     hints = organ_hints if organ_hints is not None else _DEFAULT_ORGAN_HINTS
 
     if call_claude is not None:
-        raw_findings = _ai_extract_findings(dictation_text, hints, call_claude)
-        return ai_findings_to_objects(raw_findings, dictation_text)
+        raw_findings = _ai_extract_findings(marker_engine.text_for_ai(dictation_text), hints, call_claude)
+        return marker_engine.finalize(ai_findings_to_objects(raw_findings, dictation_text), dictation_text, lambda: ai_findings_to_objects(_ai_extract_findings(marker_engine.text_for_ai(dictation_text), hints, call_claude), dictation_text))
 
     findings: List[Finding] = []
     sentences = [
