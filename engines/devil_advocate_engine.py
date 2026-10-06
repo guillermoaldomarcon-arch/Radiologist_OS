@@ -176,7 +176,7 @@ def extract_margin(text: str) -> Optional[str]:
         return "espiculados"
     if "microlobulad" in t:
         return "microlobulados"
-    if "lobulad" in t or "irregular" in t:
+    if "lobulad" in t or "irregular" in re.sub(r"forma\s+irregular\w*", " ", t):
         return "lobulados/irregulares"
     if "extratiroide" in t:
         return "extension extratiroidea"
@@ -187,8 +187,10 @@ def extract_margin(text: str) -> Optional[str]:
 
 def extract_shape(text: str) -> Optional[str]:
     t = text.lower()
-    if "mas alto que ancho" in t or "más alto que ancho" in t:
+    if re.search(r"m[aá]s alt[oa] que anch[oa]", t):
         return "mas alto que ancho"
+    if "forma irregular" in t:
+        return "irregular"
     if "oval" in t or "redond" in t:
         return "ancho/ovalado"
     return None
@@ -281,9 +283,9 @@ CLASSIFICATION_REQUIREMENTS = {
         "system": "BIRADS",
         "fields": [
             ("margins", extract_margin,
-             "¿Márgenes del nódulo? (circunscriptos / indistintos / microlobulados / espiculados)"),
+             "¿Márgenes del nódulo? (circunscriptos / indistintos / microlobulados / espiculados / irregulares)"),
             ("shape", extract_shape,
-             "¿Forma del nódulo? (ovalada-redonda / irregular)"),
+             "¿Forma del nódulo? (ovalada / redonda / irregular / más alta que ancha)"),
         ],
         "classify_fn": lambda margins, shape: classify_birads(margins, shape),
     },
@@ -482,7 +484,7 @@ def _describe_finding_for_impression(f: Finding) -> str:
     subject_parts = []
     if organ and not organ_present:
         subject_parts.append(organ)
-    if side_label and not side_present:
+    if side_label and not side_present and organ and not organ_present:
         subject_parts.append(measure_engine.agree_side(organ, side_label))
 
     if subject_parts:
@@ -501,6 +503,7 @@ def _describe_finding_for_impression(f: Finding) -> str:
 
     if not text:
         return ""
+    text = measure_engine.with_side(text, f.side)
     return text[0].upper() + text[1:] + "."
 
 
