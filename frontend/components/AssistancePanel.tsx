@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useReportStore } from "@/stores/reportStore";
 import { HelpCircle, Lightbulb, MessageSquareWarning, Sparkles } from "lucide-react";
+
 // Normaliza la medida tipeada a mm. Acepta "11", "11 mm", "1,1 cm", "1.1cm".
 // Devuelve null si no es una medida simple.
 function parseMeasurementToMm(raw: string): string | null {
@@ -11,6 +12,26 @@ function parseMeasurementToMm(raw: string): string | null {
   const num = parseFloat(m[1].replace(",", "."));
   const mm = (m[2] ?? "mm").toLowerCase() === "cm" ? num * 10 : num;
   return String(Math.round(mm * 10) / 10);
+}
+
+// Nombre en español de los descriptores que pide la Regla E (clasificación).
+const FIELD_LABELS: Record<string, string> = {
+  margins: "márgenes",
+  margin: "márgenes",
+  shape: "forma",
+  composition: "composición",
+  echogenicity: "ecogenicidad",
+  echogenic_foci: "focos ecogénicos",
+};
+
+// Las opciones vienen entre paréntesis en la pregunta, separadas por " / ".
+function optionsFromQuestion(q: string): string[] {
+  const m = q.match(/\(([^)]*\/[^)]*)\)/);
+  if (!m) return [];
+  return m[1]
+    .split("/")
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 function DevilQuestionCard({
@@ -32,21 +53,37 @@ function DevilQuestionCard({
   const anchor = question.finding_description || question.finding_name;
 
   const answerWithContext = (value: string): boolean => {
-  if (question.rule_type === "G") { onAnswer(anchor ? `[LATERALIDAD_CONFIRMADA: ${anchor} = ${value}]` : value); return true; } if (question.rule_type === "B") {
-    const mm = parseMeasurementToMm(value);
-    if (mm === null) {
-      setInputError("Ingresá solo la medida, ej. 11 mm o 1,1 cm");
-      return false;
+    if (question.rule_type === "G") {
+      onAnswer(anchor ? `[LATERALIDAD_CONFIRMADA: ${anchor} = ${value}]` : value);
+      return true;
     }
-    setInputError(null);
-    onAnswer(anchor ? `[MEDIDA_CONFIRMADA: ${anchor} = ${mm} mm]` : `${mm} mm`);
+    if (question.rule_type === "E") {
+      onAnswer(anchor ? `[DESCRIPTOR_CONFIRMADO: ${anchor} = ${value}]` : value);
+      return true;
+    }
+    if (question.rule_type === "B") {
+      const mm = parseMeasurementToMm(value);
+      if (mm === null) {
+        setInputError("Ingresá solo la medida, ej. 11 mm o 1,1 cm");
+        return false;
+      }
+      setInputError(null);
+      onAnswer(anchor ? `[MEDIDA_CONFIRMADA: ${anchor} = ${mm} mm]` : `${mm} mm`);
+      return true;
+    }
+    onAnswer(value);
     return true;
-  }
-  onAnswer(value);
-  return true;
-};
+  };
 
   const missingFieldNames = Object.keys(question.missing_fields ?? {});
+  const descriptorRows =
+    question.rule_type === "E"
+      ? Object.entries(question.missing_fields ?? {}).map(([key, q]) => ({
+          key,
+          label: FIELD_LABELS[key] ?? key,
+          options: optionsFromQuestion(String(q)),
+        }))
+      : [];
   const hasCandidates = candidateEntries.length > 0;
 
   return (
@@ -63,8 +100,29 @@ function DevilQuestionCard({
       )}
       <p className="text-xs text-zinc-500">{question.reason}</p>
 
-      {missingFieldNames.length > 0 && (
-        <p className="text-xs text-amber-400">Faltan: {missingFieldNames.join(", ")}</p>
+      {descriptorRows.length > 0 ? (
+        <div className="space-y-2 pt-1">
+          {descriptorRows.map((row) => (
+            <div key={row.key}>
+              <p className="text-xs text-amber-400 mb-1">Falta: {row.label}</p>
+              <div className="flex flex-wrap gap-1.5">
+                {row.options.map((opt) => (
+                  <button
+                    key={opt}
+                    onClick={() => answerWithContext(`${row.label} ${opt}`)}
+                    className="text-sm px-3 py-2 min-h-[40px] rounded-md bg-blue-600/20 text-blue-300 hover:bg-blue-600/30"
+                  >
+                    {opt}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        missingFieldNames.length > 0 && (
+          <p className="text-xs text-amber-400">Faltan: {missingFieldNames.join(", ")}</p>
+        )
       )}
 
       {hasCandidates ? (
@@ -85,13 +143,12 @@ function DevilQuestionCard({
             type="text"
             value={freeText}
             onChange={(e) => setFreeText(e.target.value)}
-            placeholder="Respuesta..."
+            placeholder={question.rule_type === "E" ? "Ej: márgenes irregulares" : "Respuesta..."}
             className="flex-1 text-xs px-2 py-1.5 rounded-md bg-zinc-900 border border-zinc-700 text-zinc-100 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
           <button
             onClick={() => {
               if (freeText.trim() && answerWithContext(freeText.trim())) {
-                
                 setFreeText("");
               }
             }}
