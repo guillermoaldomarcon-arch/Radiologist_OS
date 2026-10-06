@@ -784,7 +784,7 @@ def _describe_unmatched_finding(f: Finding) -> str:
             size_str = None
         if size_str:
             desc = f"{desc}{measure_engine.measure_clause(desc, size_str, f.organ)}" if desc else f"mide {size_str}"
-    return desc
+    return measure_engine.with_side(desc, f.side)
 
 
 def render_report_text(template: dict, report_dict: dict) -> str:
