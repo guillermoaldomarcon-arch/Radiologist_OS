@@ -13,6 +13,7 @@ for _subdir in ("", "models", "engines", "integrations"):
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from security import docs_kwargs, install_security
 from pydantic import BaseModel, Field
 
 from template_engine import load_template, TemplateNotFoundError
