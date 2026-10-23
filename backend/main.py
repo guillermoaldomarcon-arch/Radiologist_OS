@@ -29,14 +29,8 @@ import quality_engine
 import voice_engine
 
 
-app = FastAPI(title="Radiologist_OS API", version="0.1.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app = FastAPI(title="Radiologist_OS API", version="0.1.0", **docs_kwargs())
+install_security(app)
 
 
 def _get_call_claude():
